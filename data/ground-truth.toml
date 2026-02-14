@@ -1,0 +1,98 @@
+# Ground-truth labels for POC evaluation
+# Each entry maps transaction_id -> expected merchant + category
+
+[labels."2292043DJ7410461"]
+merchant = "Steuerverwaltung"
+category = "Taxes"
+
+[labels."2192043DJ7410458"]
+merchant = "Steuerverwaltung"
+category = "Taxes"
+
+[labels."9992402GK6077402"]
+merchant = "SBB"
+category = "Transport"
+
+[labels."9992040GK4846481"]
+merchant = "SBB"
+category = "Transport"
+
+[labels."99925537LK3754207"]
+merchant = "Bill Clayton"
+category = "Transfers"
+
+[labels."9992037GK2742652"]
+merchant = "SBB"
+category = "Transport"
+
+[labels."9992036GK1943846"]
+merchant = "SBB"
+category = "Transport"
+
+[labels."2492035DJ6603690"]
+merchant = "Vivao Sympa"
+category = "Insurance"
+
+[labels."9992035GK1243731"]
+merchant = "SBB"
+category = "Transport"
+
+[labels."9992034GK0875121"]
+merchant = "Digitec Galaxus"
+category = "Shopping"
+
+[labels."9992032GK9641051"]
+merchant = "BAZG"
+category = "Taxes"
+
+[labels."9992032GK9823735"]
+merchant = "Parkingabo"
+category = "Transport"
+
+[labels."9992031GK8542797"]
+merchant = "Bob"
+category = "Transfers"
+
+[labels."9292030DJ5699168"]
+merchant = "Vivao Sympa"
+category = "Insurance"
+
+[labels."1092030DJ5699246"]
+merchant = "Visana"
+category = "Insurance"
+
+[labels."9992530LK3109342"]
+merchant = "Alice Newe H"
+category = "Transfers"
+
+[labels."4092030DJ5699391"]
+merchant = "Vivao Sympa"
+category = "Insurance"
+
+[labels."9992030GK7785363"]
+merchant = "SBB"
+category = "Transport"
+
+[labels."9992029GK6946360"]
+merchant = "SBB EasyRide"
+category = "Transport"
+
+[labels."8392028DJ5215796"]
+merchant = "Sunrise"
+category = "Utilities"
+
+[labels."9992028GK6226200"]
+merchant = "SBB EasyRide"
+category = "Transport"
+
+[labels."0192028TQ240400"]
+merchant = "Hall Halle"
+category = "Income"
+
+[labels."9992527KH2298904"]
+merchant = "UBS"
+category = "CardPayments"
+
+[labels."9992027GK5449546"]
+merchant = "SBB EasyRide"
+category = "Transport"
