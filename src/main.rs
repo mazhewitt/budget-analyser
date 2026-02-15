@@ -3,10 +3,12 @@ mod categories;
 mod classifier;
 mod csv_parser;
 mod db;
+mod review;
 
 use std::path::Path;
 use classifier::Classifier;
 use db::Database;
+use review::{run_review, ReviewFilters};
 
 #[derive(Default, Debug)]
 struct ImportStats {
@@ -90,12 +92,74 @@ fn import_file(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    let input_path = args.get(1).map(|s| s.as_str()).unwrap_or("data/synthetic-ubstransactions-feb2026.csv");
-    let db_path = args.get(2).map(|s| s.as_str()).unwrap_or("data/budget.db");
-    let model = args.get(3).map(|s| s.as_str()).unwrap_or("qwen3:8b");
-    let endpoint = args.get(4).map(|s| s.as_str()).unwrap_or("http://localhost:11434");
+    if args.len() < 2 {
+        println!("Usage: budget-analyser <command> [args]");
+        println!("Commands:");
+        println!("  import <path> [db_path] [model] [endpoint]");
+        println!("  review [db_path] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
+        return Ok(());
+    }
 
-    println!("UBS Transaction Categoriser");
+    let command = &args[1];
+
+    match command.as_str() {
+        "import" => {
+            let input_path = args.get(2).map(|s| s.as_str()).unwrap_or("data/synthetic-ubstransactions-feb2026.csv");
+            let db_path = args.get(3).map(|s| s.as_str()).unwrap_or("data/budget.db");
+            let model = args.get(4).map(|s| s.as_str()).unwrap_or("qwen3:8b");
+            let endpoint = args.get(5).map(|s| s.as_str()).unwrap_or("http://localhost:11434");
+
+            run_import(input_path, db_path, model, endpoint)
+        }
+        "review" => {
+            let mut db_path = "data/budget.db";
+            let mut category = None;
+            let mut since = None;
+            let mut until = None;
+            let mut merchant = None;
+            let mut threshold = 0.80;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--category" => { category = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--since" => { since = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--until" => { until = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--merchant" => { merchant = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--threshold" => { 
+                        threshold = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0.80); 
+                        i += 2; 
+                    }
+                    path if !path.starts_with("--") => {
+                        db_path = path;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+            }
+
+            let db = Database::open(Path::new(db_path))?;
+            run_review(&db, ReviewFilters {
+                category,
+                since,
+                until,
+                merchant,
+                threshold,
+            })
+        }
+        // Backward compatibility
+        path => {
+            let db_path = args.get(2).map(|s| s.as_str()).unwrap_or("data/budget.db");
+            let model = args.get(3).map(|s| s.as_str()).unwrap_or("qwen3:8b");
+            let endpoint = args.get(4).map(|s| s.as_str()).unwrap_or("http://localhost:11434");
+
+            run_import(path, db_path, model, endpoint)
+        }
+    }
+}
+
+fn run_import(input_path: &str, db_path: &str, model: &str, endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("UBS Transaction Categoriser (Import)");
     println!("  Input:      {}", input_path);
     println!("  Database:   {}", db_path);
     println!("  Model:      {}", model);

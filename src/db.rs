@@ -9,6 +9,20 @@ pub struct Database {
     conn: Connection,
 }
 
+#[derive(Debug, Clone)]
+pub struct StoredTransaction {
+    pub id: i64,
+    pub date: String,
+    pub raw_description: String,
+    pub amount: f64,
+    pub currency: String,
+    pub merchant_name: String,
+    pub category: String,
+    pub source: String,
+    pub confidence: f64,
+    pub transaction_id: String,
+}
+
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -35,7 +49,7 @@ impl Database {
         // merchant_cache table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS merchant_cache (
-                raw_key TEXT PRIMARY KEY,
+                raw_key PRIMARY KEY,
                 merchant_name TEXT NOT NULL,
                 category TEXT NOT NULL,
                 confidence REAL NOT NULL,
@@ -152,6 +166,80 @@ impl Database {
         self.conn.execute(
             "INSERT INTO import_log (filename, row_count, imported_at) VALUES (?, ?, ?)",
             params![filename, row_count as i64, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_flagged_transactions(
+        &self,
+        threshold: f64,
+        category: Option<&str>,
+        since: Option<&str>,
+        until: Option<&str>,
+        merchant: Option<&str>,
+    ) -> Result<Vec<StoredTransaction>> {
+        let mut query = String::from(
+            "SELECT id, date, raw_description, amount, currency, merchant_name, category, source, confidence, transaction_id 
+             FROM transactions 
+             WHERE (confidence < ? OR category = 'Other' OR category = 'Uncategorised')"
+        );
+        let mut params_vec: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Real(threshold)];
+
+        if let Some(cat) = category {
+            query.push_str(" AND category = ?");
+            params_vec.push(rusqlite::types::Value::Text(cat.to_string()));
+        }
+        if let Some(s) = since {
+            query.push_str(" AND date >= ?");
+            params_vec.push(rusqlite::types::Value::Text(s.to_string()));
+        }
+        if let Some(u) = until {
+            query.push_str(" AND date <= ?");
+            params_vec.push(rusqlite::types::Value::Text(u.to_string()));
+        }
+        if let Some(m) = merchant {
+            query.push_str(" AND merchant_name LIKE ?");
+            params_vec.push(rusqlite::types::Value::Text(format!("%{}%", m)));
+        }
+
+        query.push_str(" ORDER BY date ASC");
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |row| {
+            Ok(StoredTransaction {
+                id: row.get(0)?,
+                date: row.get(1)?,
+                raw_description: row.get(2)?,
+                amount: row.get(3)?,
+                currency: row.get(4)?,
+                merchant_name: row.get(5)?,
+                category: row.get(6)?,
+                source: row.get(7)?,
+                confidence: row.get(8)?,
+                transaction_id: row.get(9)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn update_transaction(
+        &self,
+        id: i64,
+        merchant_name: &str,
+        category: &str,
+        confidence: f64,
+        source: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE transactions 
+             SET merchant_name = ?, category = ?, confidence = ?, source = ? 
+             WHERE id = ?",
+            params![merchant_name, category, confidence, source, id],
         )?;
         Ok(())
     }
