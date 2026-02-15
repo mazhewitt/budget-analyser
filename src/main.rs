@@ -2,30 +2,34 @@ mod cache;
 mod categories;
 mod classifier;
 mod csv_parser;
-mod evaluator;
+mod db;
 
 use std::path::Path;
-
-use cache::{CacheEntry, MerchantCache};
 use classifier::Classifier;
-use evaluator::EvaluationInput;
+use db::Database;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     let csv_path = args.get(1).map(|s| s.as_str()).unwrap_or("data/synthetic-ubstransactions-feb2026.csv");
-    let model = args.get(2).map(|s| s.as_str()).unwrap_or("qwen3:8b");
-    let endpoint = args.get(3).map(|s| s.as_str()).unwrap_or("http://localhost:11434");
-    let threshold: f64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0.80);
-    let ground_truth_path = args.get(5).map(|s| s.as_str()).unwrap_or("data/ground-truth.toml");
+    let db_path = args.get(2).map(|s| s.as_str()).unwrap_or("data/budget.db");
+    let model = args.get(3).map(|s| s.as_str()).unwrap_or("qwen3:8b");
+    let endpoint = args.get(4).map(|s| s.as_str()).unwrap_or("http://localhost:11434");
 
-    println!("Budget Analyser POC");
+    println!("UBS Transaction Categoriser");
     println!("  CSV:        {}", csv_path);
+    println!("  Database:   {}", db_path);
     println!("  Model:      {}", model);
     println!("  Endpoint:   {}", endpoint);
-    println!("  Threshold:  {:.2}", threshold);
-    println!("  Ground truth: {}", ground_truth_path);
     println!();
+
+    // Ensure data directory exists
+    if let Some(parent) = Path::new(db_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Open database
+    let db = Database::open(Path::new(db_path))?;
 
     // Parse CSV
     let transactions = match csv_parser::parse_csv(Path::new(csv_path)) {
@@ -39,54 +43,64 @@ fn main() {
         }
     };
 
-    // Load ground truth
-    let ground_truth = match evaluator::load_ground_truth(Path::new(ground_truth_path)) {
-        Ok(gt) => {
-            println!("Loaded {} ground-truth labels", gt.len());
-            gt
-        }
-        Err(e) => {
-            eprintln!("Error loading ground truth: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    // Classify each transaction
     let classifier = Classifier::new(endpoint, model);
-    let mut cache = MerchantCache::new();
-    let mut eval_inputs = Vec::new();
+    let mut new_insertions = 0;
+    let mut duplicates_skipped = 0;
+    let mut cache_hits = 0;
+    let mut llm_calls = 0;
+
+    let total = transactions.len();
+    let import_batch = Path::new(csv_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
 
     for (i, tx) in transactions.iter().enumerate() {
-        let result = if let Some(cached) = cache.lookup(&tx.description) {
-            println!("  [{}/{}] {} → {} (cached)", i + 1, transactions.len(), tx.description, cached.category);
-            classifier::ClassificationResult {
-                merchant: cached.merchant.clone(),
-                category: cached.category,
-                confidence: cached.confidence,
-            }
+        // 1. Duplicate detection
+        if db.transaction_exists(&tx.transaction_id)? {
+            duplicates_skipped += 1;
+            continue;
+        }
+
+        // 2. Normalise key for cache lookup
+        let key = cache::normalise_merchant_key(&tx.description);
+
+        // 3. Cache lookup vs LLM classification
+        let result = if let Some(mut cached) = db.cache_lookup(&key)? {
+            cache_hits += 1;
+            cached.source = "cache".to_string();
+            cached
         } else {
+            llm_calls += 1;
             let amount = tx.debit.or(tx.credit);
-            let result = classifier.classify(&tx.description, amount, &tx.details);
-            println!(
-                "  [{}/{}] {} → {} ({}) [{:.2}]",
-                i + 1, transactions.len(), tx.description, result.category, result.merchant, result.confidence
-            );
-            cache.insert(&tx.description, CacheEntry {
-                merchant: result.merchant.clone(),
-                category: result.category,
-                confidence: result.confidence,
-            });
-            result
+            let res = classifier.classify(&tx.description, amount, &tx.details);
+            
+            // Store in cache for future use
+            db.cache_insert(&key, &res)?;
+            res
         };
 
-        eval_inputs.push(EvaluationInput {
-            transaction_id: tx.transaction_id.clone(),
-            description: tx.description.clone(),
-            result,
-        });
+        println!(
+            "  [{}/{}] {} → {} ({}) [{:.2}] via {}",
+            i + 1, total, tx.description, result.category, result.merchant, result.confidence, result.source
+        );
+
+        // 4. Insert transaction
+        if db.insert_transaction(tx, &result, Some(import_batch))? {
+            new_insertions += 1;
+        }
     }
 
-    // Evaluate and print report
-    let report = evaluator::evaluate(&eval_inputs, &ground_truth, threshold);
-    evaluator::print_report(&report);
+    // 5. Log import run
+    db.log_import(import_batch, new_insertions)?;
+
+    // 6. Print summary
+    println!("\nImport Summary");
+    println!("  Total parsed:       {}", total);
+    println!("  New insertions:     {}", new_insertions);
+    println!("  Duplicates skipped: {}", duplicates_skipped);
+    println!("  Cache hits:         {}", cache_hits);
+    println!("  LLM calls:          {}", llm_calls);
+
+    Ok(())
 }

@@ -1,36 +1,3 @@
-use std::collections::HashMap;
-
-use crate::categories::Category;
-
-#[derive(Debug, Clone)]
-pub struct CacheEntry {
-    pub merchant: String,
-    pub category: Category,
-    pub confidence: f64,
-}
-
-pub struct MerchantCache {
-    entries: HashMap<String, CacheEntry>,
-}
-
-impl MerchantCache {
-    pub fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
-    }
-
-    pub fn lookup(&self, description: &str) -> Option<&CacheEntry> {
-        let key = normalise_merchant_key(description);
-        self.entries.get(&key)
-    }
-
-    pub fn insert(&mut self, description: &str, entry: CacheEntry) {
-        let key = normalise_merchant_key(description);
-        self.entries.insert(key, entry);
-    }
-}
-
 pub fn normalise_merchant_key(description: &str) -> String {
     let mut s = description.to_uppercase();
 

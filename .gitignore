@@ -16,6 +16,7 @@ Cargo.lock
 
 # Data (exclude real transaction data)
 /data/*.csv
+/data/*.db
 !/data/synthetic-*.csv
 
 # OpenSpec temporary files

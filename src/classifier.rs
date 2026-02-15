@@ -7,6 +7,7 @@ pub struct ClassificationResult {
     pub merchant: String,
     pub category: Category,
     pub confidence: f64,
+    pub source: String,
 }
 
 pub struct Classifier {
@@ -104,12 +105,14 @@ Respond with a JSON object containing exactly these fields:
 Examples of UBS merchant strings and their classifications:
 - "SBB MOBILE" → {{"merchant": "SBB", "category": "Transport", "confidence": 0.95}}
 - "SBB EASYRIDE" → {{"merchant": "SBB EasyRide", "category": "Transport", "confidence": 0.95}}
-- "Steuerverwaltung EBILL-RECHT" → {{"merchant": "Steuerverwaltung", "category": "Taxes", "confidence": 0.90}}
+- "Steuerverwaltung EBILL-RECHT" → {{"merchant": "Steuerverwaltung", "category": "Fees", "confidence": 0.90}}
 - "MIGROS BASEL M 01234 KARTE 1234" → {{"merchant": "Migros Basel", "category": "Groceries", "confidence": 0.95}}
 - "Vivao Sympa EBILL-RECHT" → {{"merchant": "Vivao Sympa", "category": "Insurance", "confidence": 0.85}}
 - "Visana Service EBILL-RECHT" → {{"merchant": "Visana", "category": "Insurance", "confidence": 0.90}}
 - "DIGITEC GALAXUS" → {{"merchant": "Digitec Galaxus", "category": "Shopping", "confidence": 0.95}}
-- "UBS Switzerland" with details "CREDIT CARD STATEMENT" → {{"merchant": "UBS", "category": "CardPayments", "confidence": 0.95}}
+- "Sunrise Communications AG" → {{"merchant": "Sunrise", "category": "Subscriptions", "confidence": 0.95}}
+- "EWZ Elektrizitätswerk" → {{"merchant": "EWZ", "category": "Housing", "confidence": 0.95}}
+- "UBS Switzerland" with details "CREDIT CARD STATEMENT" → {{"merchant": "UBS", "category": "Transfers", "confidence": 0.95}}
 - "Bob" with details "Debit UBS TWINT" → {{"merchant": "Bob", "category": "Transfers", "confidence": 0.80}}"#,
             Category::schema_for_prompt()
         )
@@ -145,6 +148,7 @@ Examples of UBS merchant strings and their classifications:
             merchant: parsed.merchant.unwrap_or_else(|| description.to_string()),
             category,
             confidence: parsed.confidence.unwrap_or(0.0),
+            source: "llm".to_string(),
         }
     }
 
@@ -153,6 +157,7 @@ Examples of UBS merchant strings and their classifications:
             merchant: description.to_string(),
             category: Category::Uncategorised,
             confidence: 0.0,
+            source: "llm".to_string(),
         }
     }
 }
