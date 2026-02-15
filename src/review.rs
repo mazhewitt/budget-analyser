@@ -74,6 +74,7 @@ pub fn run_review(db: &Database, filters: ReviewFilters) -> Result<(), Box<dyn s
                         confidence: 1.0,
                         source: "manual".to_string(),
                     })?;
+                    db.insert_few_shot_example(&key, &tx.raw_description, &tx.merchant_name, &tx.category)?;
                     stats.confirmed += 1;
                     println!("Confirmed.");
                     break;
@@ -101,6 +102,7 @@ Select category:");
                                 confidence: 1.0,
                                 source: "manual".to_string(),
                             })?;
+                            db.insert_few_shot_example(&key, &tx.raw_description, &tx.merchant_name, &new_cat.to_string())?;
                             stats.corrected += 1;
                             println!("Updated category to {}.", new_cat);
                             break;
@@ -125,6 +127,7 @@ Select category:");
                             confidence: 1.0,
                             source: "manual".to_string(),
                         })?;
+                        db.insert_few_shot_example(&key, &tx.raw_description, new_merchant, &tx.category)?;
                         stats.corrected += 1;
                         println!("Updated merchant to {}.", new_merchant);
                         break;

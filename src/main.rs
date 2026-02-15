@@ -47,6 +47,8 @@ fn import_file(
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
 
+    let examples = db.get_few_shot_examples()?;
+
     for (i, tx) in transactions.iter().enumerate() {
         // 1. Duplicate detection
         if db.transaction_exists(&tx.transaction_id)? {
@@ -65,7 +67,7 @@ fn import_file(
         } else {
             stats.llm_calls += 1;
             let amount = tx.debit.or(tx.credit);
-            let res = classifier.classify(&tx.description, amount, &tx.details);
+            let res = classifier.classify(&tx.description, amount, &tx.details, &examples);
             
             // Store in cache for future use
             db.cache_insert(&key, &res)?;
@@ -97,6 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Commands:");
         println!("  import <path> [db_path] [model] [endpoint]");
         println!("  review [db_path] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
+        println!("  reclassify [db_path] [model] [endpoint] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
         return Ok(());
     }
 
@@ -147,6 +150,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 threshold,
             })
         }
+        "reclassify" => {
+            let mut db_path = "data/budget.db";
+            let mut model = "qwen3:8b";
+            let mut endpoint = "http://localhost:11434";
+            let mut category = None;
+            let mut since = None;
+            let mut until = None;
+            let mut merchant = None;
+            let mut threshold = 0.80;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--category" => { category = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--since" => { since = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--until" => { until = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--merchant" => { merchant = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    "--threshold" => { 
+                        threshold = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0.80); 
+                        i += 2; 
+                    }
+                    path if !path.starts_with("--") => {
+                        // Very basic heuristic: if it contains : it's a model or endpoint
+                        if path.contains(":") {
+                            if path.starts_with("http") {
+                                endpoint = path;
+                            } else {
+                                model = path;
+                            }
+                        } else {
+                            db_path = path;
+                        }
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+            }
+
+            run_reclassify(db_path, model, endpoint, ReviewFilters {
+                category,
+                since,
+                until,
+                merchant,
+                threshold,
+            })
+        }
         // Backward compatibility
         path => {
             let db_path = args.get(2).map(|s| s.as_str()).unwrap_or("data/budget.db");
@@ -156,6 +205,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_import(path, db_path, model, endpoint)
         }
     }
+}
+
+fn run_reclassify(db_path: &str, model: &str, endpoint: &str, filters: ReviewFilters) -> Result<(), Box<dyn std::error::Error>> {
+    println!("UBS Transaction Categoriser (Reclassify)");
+    println!("  Database:   {}", db_path);
+    println!("  Model:      {}", model);
+    println!("  Endpoint:   {}", endpoint);
+    println!();
+
+    let db = Database::open(Path::new(db_path))?;
+    let classifier = Classifier::new(endpoint, model);
+    let examples = db.get_few_shot_examples()?;
+
+    let transactions = db.get_flagged_transactions(
+        filters.threshold,
+        filters.category,
+        filters.since,
+        filters.until,
+        filters.merchant,
+    )?;
+
+    if transactions.is_empty() {
+        println!("No transactions to reclassify.");
+        return Ok(());
+    }
+
+    println!("Resetting and reclassifying {} transactions...", transactions.len());
+
+    let mut cache_hits = 0;
+    let mut llm_calls = 0;
+    let mut category_changes = 0;
+
+    for tx in transactions {
+        let key = cache::normalise_merchant_key(&tx.raw_description);
+        
+        // Clear LLM cache entry to force re-evaluation
+        db.delete_llm_cache_entry(&key)?;
+
+        let result = if let Some(mut cached) = db.cache_lookup(&key)? {
+            cache_hits += 1;
+            cached.source = "cache".to_string();
+            cached
+        } else {
+            llm_calls += 1;
+            // Amount awareness: we don't have the original tx struct here, but we have amount
+            let res = classifier.classify(&tx.raw_description, Some(tx.amount), "", &examples);
+            
+            // Store in cache
+            db.cache_insert(&key, &res)?;
+            res
+        };
+
+        if result.category.to_string() != tx.category {
+            category_changes += 1;
+            println!("  {} → {} (was {})", tx.raw_description, result.category, tx.category);
+        }
+
+        db.update_transaction(tx.id, &result.merchant, &result.category.to_string(), result.confidence, &result.source)?;
+    }
+
+    println!("\nReclassification Summary");
+    println!("  Total processed:    {}", cache_hits + llm_calls);
+    println!("  Cache hits:         {}", cache_hits);
+    println!("  LLM calls:          {}", llm_calls);
+    println!("  Category changes:   {}", category_changes);
+
+    Ok(())
 }
 
 fn run_import(input_path: &str, db_path: &str, model: &str, endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::categories::Category;
+use crate::db::FewShotExample;
 
 #[derive(Debug, Clone)]
 pub struct ClassificationResult {
@@ -56,8 +57,8 @@ impl Classifier {
         }
     }
 
-    pub fn classify(&self, description: &str, amount: Option<f64>, details: &str) -> ClassificationResult {
-        let system_prompt = Self::build_system_prompt();
+    pub fn classify(&self, description: &str, amount: Option<f64>, details: &str, examples: &[FewShotExample]) -> ClassificationResult {
+        let system_prompt = Self::build_system_prompt(examples);
         let user_prompt = Self::build_user_prompt(description, amount, details);
 
         let request = ChatRequest {
@@ -91,8 +92,8 @@ impl Classifier {
         Self::parse_llm_output(&chat_resp.message.content, description)
     }
 
-    fn build_system_prompt() -> String {
-        format!(
+    fn build_system_prompt(examples: &[FewShotExample]) -> String {
+        let mut prompt = format!(
             r#"You are a Swiss bank transaction classifier. Given a transaction description from a UBS bank statement, extract the merchant name and assign a spending category.
 
 Categories:
@@ -115,7 +116,16 @@ Examples of UBS merchant strings and their classifications:
 - "UBS Switzerland" with details "CREDIT CARD STATEMENT" → {{"merchant": "UBS", "category": "Transfers", "confidence": 0.95}}
 - "Bob" with details "Debit UBS TWINT" → {{"merchant": "Bob", "category": "Transfers", "confidence": 0.80}}"#,
             Category::schema_for_prompt()
-        )
+        );
+
+        for ex in examples {
+            prompt.push_str(&format!(
+                "\n- \"{}\" → {{\"merchant\": \"{}\", \"category\": \"{}\", \"confidence\": 0.95}}",
+                ex.raw_description, ex.correct_merchant, ex.correct_category
+            ));
+        }
+
+        prompt
     }
 
     fn build_user_prompt(description: &str, amount: Option<f64>, details: &str) -> String {

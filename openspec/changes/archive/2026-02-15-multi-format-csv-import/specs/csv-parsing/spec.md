@@ -1,3 +1,5 @@
+## MODIFIED Requirements
+
 ### Requirement: Parse UBS monthly export CSV into transaction records
 
 The system SHALL parse CSV files in any of three supported UBS export formats (synthetic, account statement, credit card invoice) and produce a list of typed `Transaction` records. The output struct is identical regardless of source format. Existing synthetic format parsing (11 comma-separated columns, DD.MM.YYYY dates) SHALL continue to work unchanged.
@@ -21,6 +23,8 @@ The system SHALL parse CSV files in any of three supported UBS export formats (s
 
 - **WHEN** a transaction has description "Steuerverwaltung EBILL-RECHT"
 - **THEN** the transaction record's description field SHALL be exactly "Steuerverwaltung EBILL-RECHT" (no trimming or normalisation)
+
+## ADDED Requirements
 
 ### Requirement: Parse UBS account statement format
 

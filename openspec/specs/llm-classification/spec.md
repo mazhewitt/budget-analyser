@@ -1,23 +1,16 @@
 ## ADDED Requirements
 
-### Requirement: Classify transactions via local Ollama model
+### Requirement: Classify transactions using local LLM with dynamic examples
 
-The system SHALL send each transaction's description (and optionally amount and details) to a local Ollama instance via `POST /api/chat` with JSON mode enabled. The system SHALL construct a system prompt containing the category schema and few-shot examples of UBS merchant strings. The LLM SHALL return a JSON object with fields: merchant (normalised merchant name), category (one of the defined categories), and confidence (float 0.0–1.0).
+The classifier SHALL accept an optional list of few-shot examples when building the system prompt. Dynamic examples SHALL be appended after the hardcoded examples in the prompt. The `classify()` method SHALL accept a `&[FewShotExample]` parameter. When the list is empty, behavior SHALL be identical to the current static prompt.
 
-#### Scenario: Successful classification of clear merchant
+#### Scenario: Classification with dynamic examples
+- **WHEN** the classifier is called with few-shot examples loaded from the database
+- **THEN** the system prompt SHALL include both hardcoded and dynamic examples
 
-- **WHEN** a transaction with description "SBB MOBILE" is sent to the LLM
-- **THEN** the response SHALL contain a valid merchant name, a category from the defined schema, and a confidence score between 0.0 and 1.0
-
-#### Scenario: Classification of cryptic merchant string
-
-- **WHEN** a transaction with description "Steuerverwaltung EBILL-RECHT" is sent to the LLM
-- **THEN** the response SHALL still return a valid JSON with merchant, category, and confidence fields
-
-#### Scenario: Invalid JSON response from LLM
-
-- **WHEN** the LLM returns a response that cannot be parsed as the expected JSON schema
-- **THEN** the system SHALL treat it as a classification failure and assign Uncategorised with confidence 0.0
+#### Scenario: Classification without dynamic examples
+- **WHEN** the classifier is called with an empty examples list
+- **THEN** the system prompt SHALL contain only the hardcoded examples (backward compatible)
 
 ### Requirement: Support configurable model selection
 

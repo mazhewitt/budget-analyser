@@ -23,27 +23,15 @@ For each flagged transaction, the system SHALL display: the raw description, mer
 - **THEN** the system SHALL show raw_description, merchant_name, category, confidence, amount, and date
 
 ### Requirement: Accept user corrections
-For each flagged transaction, the system SHALL present options: (1) Confirm — accept the current classification, (2) Change category — select from the category list, (3) Edit merchant — type a new merchant name, (4) Skip — move to next without changes, (5) Quit — exit review. User input SHALL be read from stdin.
+For each flagged transaction, the system SHALL present options: (1) Confirm, (2) Change category, (3) Edit merchant, (4) Skip, (5) Quit. When the user confirms or corrects a transaction, the system SHALL store the correction as a few-shot example in addition to updating the transaction and merchant cache.
 
-#### Scenario: Confirm classification
-- **WHEN** the user selects "Confirm"
-- **THEN** the transaction's confidence SHALL be updated to 1.0 and source to "manual"
+#### Scenario: Correction stored as few-shot example
+- **WHEN** the user corrects a transaction's category from "Other" to "Fees"
+- **THEN** a few-shot example SHALL be stored with the normalised merchant pattern, raw description, corrected merchant name, and corrected category
 
-#### Scenario: Change category
-- **WHEN** the user selects "Change category" and picks "Transport"
-- **THEN** the transaction's category SHALL be updated to "Transport", confidence to 1.0, and source to "manual"
-
-#### Scenario: Edit merchant name
-- **WHEN** the user selects "Edit merchant" and types "Coop Pronto"
-- **THEN** the transaction's merchant_name SHALL be updated to "Coop Pronto", confidence to 1.0, and source to "manual"
-
-#### Scenario: Skip transaction
-- **WHEN** the user selects "Skip"
-- **THEN** the transaction SHALL not be modified and the next flagged transaction SHALL be shown
-
-#### Scenario: Quit review
-- **WHEN** the user selects "Quit"
-- **THEN** the review loop SHALL exit immediately, preserving all changes made so far
+#### Scenario: Confirm stores few-shot example
+- **WHEN** the user confirms an LLM classification
+- **THEN** a few-shot example SHALL be stored with the confirmed merchant and category
 
 ### Requirement: Persist corrections to transaction and merchant cache
 When a user confirms or corrects a transaction, the system SHALL update the transaction record in the `transactions` table AND update the corresponding entry in the `merchant_cache` table using the normalised merchant key. This ensures future imports of the same merchant benefit from the correction.

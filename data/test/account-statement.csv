@@ -1,0 +1,15 @@
+Account number:;CH94 3000 0006 7000 0187 9;
+IBAN:;CH76 0029 2292 6011 6940 B;
+From:;2026-01-01;
+Until:;2026-02-15;
+Opening balance:;7908.77;
+Closing balance:;1483.82;
+Valued in:;CHF;
+Numbers of transactions in this period:;5;
+
+Trade date;Trade time;Booking date;Value date;Currency;Debit;Credit;Individual amount;Balance;Transaction no.;Description1;Description2;Description3;Footnotes;
+2026-02-12;;2026-02-12;2026-02-12;CHF;-877.45;;;1483.82;2292043DJ7410461;"Steuerverwaltung;Steinbruchstrasse 18; 7001 Chur; CH";"EBILL-RECHNUNG; PayNet Order";"Reference no. QRR: 11 00000 00017 65117 01485 32667; Reason for payment: QRR; Account no. IBAN: CH94 3000 0006 7000 0187 9; Costs: E-Banking domestic; Transaction no. 2292043DJ7410461";;
+2026-02-12;;2026-02-12;2026-02-12;CHF;-535.70;;;2361.27;2192043DJ7410458;"Steuerverwaltung;Steinbruchstrasse 18; 7001 Chur; CH";"EBILL-RECHNUNG; PayNet Order";"Reference no. QRR: 11 00000 00017 65117 01485 32667; Reason for payment: QRR; Account no. IBAN: CH94 3000 0006 7000 0187 9; Costs: E-Banking domestic; Transaction no. 2192043DJ7410458";;
+2026-02-11;;2026-02-11;2026-02-11;CHF;-11.80;;;2896.97;9992402GK6077402;"SBB MOBILE; Payment UBS TWINT";;"Reason for payment: - na, 3000 Bern; TWINT-Acc.:+41123455555; Transaction no. 9992402GK6077402";;
+2026-02-09;;2026-02-09;2026-02-09;CHF;-11.80;;;2908.77;9992040GK4846481;"SBB MOBILE; Payment UBS TWINT";;"Reason for payment: - na, 3000 Bern; TWINT-Acc.:+41123455555; Transaction no. 9992040GK4846481";;
+2026-02-01;;2026-02-01;2026-02-01;CHF;;5000.00;;7908.77;8882040GK4846481;"Salary from ACME Corp";"Monthly salary";"Account no. IBAN: CH58 0029 2292 6011 69FL J; Transaction no. 8882040GK4846481";;

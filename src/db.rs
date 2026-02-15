@@ -23,6 +23,14 @@ pub struct StoredTransaction {
     pub transaction_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct FewShotExample {
+    pub merchant_pattern: String,
+    pub raw_description: String,
+    pub correct_merchant: String,
+    pub correct_category: String,
+}
+
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -67,6 +75,19 @@ impl Database {
                 filename TEXT NOT NULL,
                 row_count INTEGER NOT NULL,
                 imported_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // few_shot_examples table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS few_shot_examples (
+                id INTEGER PRIMARY KEY,
+                merchant_pattern TEXT NOT NULL UNIQUE,
+                raw_description TEXT NOT NULL,
+                correct_merchant TEXT NOT NULL,
+                correct_category TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )",
             [],
         )?;
@@ -242,5 +263,50 @@ impl Database {
             params![merchant_name, category, confidence, source, id],
         )?;
         Ok(())
+    }
+
+    pub fn insert_few_shot_example(
+        &self,
+        merchant_pattern: &str,
+        raw_description: &str,
+        correct_merchant: &str,
+        correct_category: &str,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO few_shot_examples (
+                merchant_pattern, raw_description, correct_merchant, correct_category, created_at
+            ) VALUES (?, ?, ?, ?, ?)",
+            params![merchant_pattern, raw_description, correct_merchant, correct_category, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_few_shot_examples(&self) -> Result<Vec<FewShotExample>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT merchant_pattern, raw_description, correct_merchant, correct_category FROM few_shot_examples"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(FewShotExample {
+                merchant_pattern: row.get(0)?,
+                raw_description: row.get(1)?,
+                correct_merchant: row.get(2)?,
+                correct_category: row.get(3)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn delete_llm_cache_entry(&self, raw_key: &str) -> Result<bool> {
+        let rows = self.conn.execute(
+            "DELETE FROM merchant_cache WHERE raw_key = ? AND source = 'llm'",
+            params![raw_key],
+        )?;
+        Ok(rows > 0)
     }
 }
