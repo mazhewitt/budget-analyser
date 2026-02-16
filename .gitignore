@@ -23,6 +23,11 @@ Cargo.lock
 # OpenSpec temporary files
 .openspec/
 
+# Python virtual environment
+.venv/
+
 # Environment
 .env
 .env.local
+
+data/real_data/*

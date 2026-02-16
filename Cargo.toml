@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
+encoding_rs = "0.8"
+encoding_rs_io = "0.1"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

@@ -18,14 +18,20 @@ pub struct StoredTransaction {
     pub currency: String,
     pub merchant_name: String,
     pub category: String,
-    pub source: String,
+    pub _source: String,
     pub confidence: f64,
-    pub transaction_id: String,
+    pub _transaction_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CategoryInfo {
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct FewShotExample {
-    pub merchant_pattern: String,
+    pub _merchant_pattern: String,
     pub raw_description: String,
     pub correct_merchant: String,
     pub correct_category: String,
@@ -92,6 +98,31 @@ impl Database {
             [],
         )?;
 
+        // categories table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS categories (
+                name TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // Seed categories if empty
+        {
+            let mut stmt = conn.prepare("SELECT COUNT(*) FROM categories")?;
+            let count: i64 = stmt.query_row([], |row| row.get(0))?;
+            if count == 0 {
+                let now = Utc::now().to_rfc3339();
+                for cat in Category::all() {
+                    conn.execute(
+                        "INSERT INTO categories (name, description, created_at) VALUES (?, ?, ?)",
+                        params![cat.to_string(), cat.description(), now],
+                    )?;
+                }
+            }
+        }
+
         Ok(Database { conn })
     }
 
@@ -116,7 +147,7 @@ impl Database {
                 amount,
                 tx.currency,
                 classification.merchant,
-                classification.category.to_string(),
+                classification.category,
                 classification.source,
                 classification.confidence,
                 tx.transaction_id,
@@ -145,12 +176,9 @@ impl Database {
 
         if let Some(row) = rows.next()? {
             let merchant: String = row.get(0)?;
-            let category_str: String = row.get(1)?;
+            let category: String = row.get(1)?;
             let confidence: f64 = row.get(2)?;
             let source: String = row.get(3)?;
-
-            let category: Category = serde_json::from_value(serde_json::Value::String(category_str))
-                .unwrap_or(Category::Uncategorised);
 
             Ok(Some(ClassificationResult {
                 merchant,
@@ -172,7 +200,7 @@ impl Database {
             params![
                 raw_key,
                 result.merchant,
-                result.category.to_string(),
+                result.category,
                 result.confidence,
                 result.source,
                 now,
@@ -235,9 +263,9 @@ impl Database {
                 currency: row.get(4)?,
                 merchant_name: row.get(5)?,
                 category: row.get(6)?,
-                source: row.get(7)?,
+                _source: row.get(7)?,
                 confidence: row.get(8)?,
-                transaction_id: row.get(9)?,
+                _transaction_id: row.get(9)?,
             })
         })?;
 
@@ -288,7 +316,7 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(FewShotExample {
-                merchant_pattern: row.get(0)?,
+                _merchant_pattern: row.get(0)?,
                 raw_description: row.get(1)?,
                 correct_merchant: row.get(2)?,
                 correct_category: row.get(3)?,
@@ -308,5 +336,30 @@ impl Database {
             params![raw_key],
         )?;
         Ok(rows > 0)
+    }
+
+    pub fn list_categories(&self) -> Result<Vec<CategoryInfo>> {
+        let mut stmt = self.conn.prepare("SELECT name, description FROM categories ORDER BY name ASC")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(CategoryInfo {
+                name: row.get(0)?,
+                description: row.get(1)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn add_category(&self, name: &str, description: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO categories (name, description, created_at) VALUES (?, ?, ?)",
+            params![name, description, now],
+        )?;
+        Ok(())
     }
 }

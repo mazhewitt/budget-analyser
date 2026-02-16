@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::categories::Category;
-use crate::db::FewShotExample;
+use crate::db::{FewShotExample, CategoryInfo};
 
 #[derive(Debug, Clone)]
 pub struct ClassificationResult {
     pub merchant: String,
-    pub category: Category,
+    pub category: String,
     pub confidence: f64,
     pub source: String,
 }
@@ -57,8 +56,8 @@ impl Classifier {
         }
     }
 
-    pub fn classify(&self, description: &str, amount: Option<f64>, details: &str, examples: &[FewShotExample]) -> ClassificationResult {
-        let system_prompt = Self::build_system_prompt(examples);
+    pub fn classify(&self, description: &str, amount: Option<f64>, details: &str, examples: &[FewShotExample], categories: &[CategoryInfo]) -> ClassificationResult {
+        let system_prompt = Self::build_system_prompt(examples, categories);
         let user_prompt = Self::build_user_prompt(description, amount, details);
 
         let request = ChatRequest {
@@ -73,26 +72,45 @@ impl Classifier {
 
         let url = format!("{}/api/chat", self.base_url);
 
-        let response = match self.client.post(&url).json(&request).send() {
-            Ok(resp) => resp,
-            Err(e) => {
-                eprintln!("Ollama request failed: {}", e);
-                return Self::fallback(description);
-            }
-        };
+        // Retry logic with exponential backoff
+        const MAX_RETRIES: u32 = 3;
+        let mut retry_count = 0;
 
-        let chat_resp: ChatResponse = match response.json() {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Failed to parse Ollama response: {}", e);
-                return Self::fallback(description);
-            }
-        };
+        loop {
+            let response = match self.client.post(&url).json(&request).send() {
+                Ok(resp) => resp,
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count > MAX_RETRIES {
+                        eprintln!("Ollama request failed after {} retries: {}", MAX_RETRIES, e);
+                        return Self::fallback(description);
+                    }
+                    let backoff_ms = 500 * 2u64.pow(retry_count - 1); // 500ms, 1s, 2s
+                    eprintln!("Ollama request failed (attempt {}/{}): {}. Retrying in {}ms...",
+                             retry_count, MAX_RETRIES, e, backoff_ms);
+                    std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
+                    continue;
+                }
+            };
 
-        Self::parse_llm_output(&chat_resp.message.content, description)
+            let chat_resp: ChatResponse = match response.json() {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Failed to parse Ollama response: {}", e);
+                    return Self::fallback(description);
+                }
+            };
+
+            return Self::parse_llm_output(&chat_resp.message.content, description);
+        }
     }
 
-    fn build_system_prompt(examples: &[FewShotExample]) -> String {
+    fn build_system_prompt(examples: &[FewShotExample], categories: &[CategoryInfo]) -> String {
+        let mut category_schema = String::new();
+        for cat in categories {
+            category_schema.push_str(&format!("- {}: {}\n", cat.name, cat.description));
+        }
+
         let mut prompt = format!(
             r#"You are a Swiss bank transaction classifier. Given a transaction description from a UBS bank statement, extract the merchant name and assign a spending category.
 
@@ -115,7 +133,7 @@ Examples of UBS merchant strings and their classifications:
 - "EWZ Elektrizitätswerk" → {{"merchant": "EWZ", "category": "Housing", "confidence": 0.95}}
 - "UBS Switzerland" with details "CREDIT CARD STATEMENT" → {{"merchant": "UBS", "category": "Transfers", "confidence": 0.95}}
 - "Bob" with details "Debit UBS TWINT" → {{"merchant": "Bob", "category": "Transfers", "confidence": 0.80}}"#,
-            Category::schema_for_prompt()
+            category_schema
         );
 
         for ex in examples {
@@ -148,15 +166,9 @@ Examples of UBS merchant strings and their classifications:
             }
         };
 
-        let category = parsed
-            .category
-            .as_deref()
-            .and_then(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).ok())
-            .unwrap_or(Category::Uncategorised);
-
         ClassificationResult {
             merchant: parsed.merchant.unwrap_or_else(|| description.to_string()),
-            category,
+            category: parsed.category.unwrap_or_else(|| "Uncategorised".to_string()),
             confidence: parsed.confidence.unwrap_or(0.0),
             source: "llm".to_string(),
         }
@@ -165,7 +177,7 @@ Examples of UBS merchant strings and their classifications:
     fn fallback(description: &str) -> ClassificationResult {
         ClassificationResult {
             merchant: description.to_string(),
-            category: Category::Uncategorised,
+            category: "Uncategorised".to_string(),
             confidence: 0.0,
             source: "llm".to_string(),
         }

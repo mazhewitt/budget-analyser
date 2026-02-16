@@ -1,6 +1,6 @@
 use std::io::{self, Write};
-use crate::db::Database;
-use crate::categories::Category;
+use std::collections::BTreeMap;
+use crate::db::{Database, StoredTransaction, CategoryInfo};
 use crate::cache::normalise_merchant_key;
 use crate::classifier::ClassificationResult;
 
@@ -13,13 +13,14 @@ pub struct ReviewFilters<'a> {
 }
 
 struct ReviewStats {
-    total: usize,
+    groups: usize,
+    transactions: usize,
     confirmed: usize,
     corrected: usize,
     skipped: usize,
 }
 
-pub fn run_review(db: &Database, filters: ReviewFilters) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_review(db: &Database, filters: ReviewFilters, categories: &[CategoryInfo]) -> Result<(), Box<dyn std::error::Error>> {
     let transactions = db.get_flagged_transactions(
         filters.threshold,
         filters.category,
@@ -33,29 +34,43 @@ pub fn run_review(db: &Database, filters: ReviewFilters) -> Result<(), Box<dyn s
         return Ok(());
     }
 
+    // Group transactions by normalised merchant key (preserving insertion order via BTreeMap)
+    let mut groups: BTreeMap<String, Vec<StoredTransaction>> = BTreeMap::new();
+    for tx in transactions {
+        let key = normalise_merchant_key(&tx.raw_description);
+        groups.entry(key).or_default().push(tx);
+    }
+
+    let total_groups = groups.len();
+    let total_txs: usize = groups.values().map(|g| g.len()).sum();
+    println!("Starting review: {} transactions in {} groups", total_txs, total_groups);
+    println!();
+
     let mut stats = ReviewStats {
-        total: 0,
+        groups: 0,
+        transactions: 0,
         confirmed: 0,
         corrected: 0,
         skipped: 0,
     };
 
-    let total_flagged = transactions.len();
-    println!("Starting review of {} flagged transactions...", total_flagged);
-    println!();
+    for (key, group) in &groups {
+        stats.groups += 1;
+        let first = &group[0];
+        let total_amount: f64 = group.iter().map(|t| t.amount).sum();
 
-    for tx in transactions {
-        stats.total += 1;
-        println!("--- Transaction {}/{} ---", stats.total, total_flagged);
-        println!("Date:     {}", tx.date);
-        println!("Amount:   {:.2} {}", tx.amount, tx.currency);
-        println!("Raw:      {}", tx.raw_description);
-        println!("Merchant: {}", tx.merchant_name);
-        println!("Category: {} (confidence: {:.2})", tx.category, tx.confidence);
+        println!("=== Group {}/{}: {} ({} transactions) ===", stats.groups, total_groups, key, group.len());
+        println!("Merchant: {}", first.merchant_name);
+        println!("Category: {} (confidence: {:.2})", first.category, first.confidence);
+        println!("Total:    {:.2} {}", total_amount, first.currency);
+
+        for tx in group {
+            println!("  {} | {:>10.2} | {}", tx.date, tx.amount, tx.raw_description);
+        }
         println!();
 
         loop {
-            print!("(1) Confirm, (2) Category, (3) Merchant, (4) Skip, (5) Quit: ");
+            print!("(1) Confirm all, (2) Category, (3) Merchant, (4) Skip, (5) Quit: ");
             io::stdout().flush()?;
 
             let mut input = String::new();
@@ -64,28 +79,27 @@ pub fn run_review(db: &Database, filters: ReviewFilters) -> Result<(), Box<dyn s
 
             match choice {
                 "1" => {
-                    // Confirm
-                    db.update_transaction(tx.id, &tx.merchant_name, &tx.category, 1.0, "manual")?;
-                    let key = normalise_merchant_key(&tx.raw_description);
-                    db.cache_insert(&key, &ClassificationResult {
-                        merchant: tx.merchant_name.clone(),
-                        category: serde_json::from_value(serde_json::Value::String(tx.category.clone()))
-                            .unwrap_or(Category::Uncategorised),
+                    let result = ClassificationResult {
+                        merchant: first.merchant_name.clone(),
+                        category: first.category.clone(),
                         confidence: 1.0,
                         source: "manual".to_string(),
-                    })?;
-                    db.insert_few_shot_example(&key, &tx.raw_description, &tx.merchant_name, &tx.category)?;
-                    stats.confirmed += 1;
-                    println!("Confirmed.");
+                    };
+                    db.cache_insert(&key, &result)?;
+                    db.insert_few_shot_example(&key, &first.raw_description, &first.merchant_name, &first.category)?;
+
+                    for tx in group {
+                        db.update_transaction(tx.id, &first.merchant_name, &first.category, 1.0, "manual")?;
+                    }
+                    stats.confirmed += group.len();
+                    stats.transactions += group.len();
+                    println!("Confirmed {} transactions.", group.len());
                     break;
                 }
                 "2" => {
-                    // Change category
-                    let categories = Category::all();
-                    println!("
-Select category:");
+                    println!("\nSelect category:");
                     for (i, cat) in categories.iter().enumerate() {
-                        println!("  {:2}. {}", i + 1, cat);
+                        println!("  {:2}. {}", i + 1, cat.name);
                     }
                     print!("Choice: ");
                     io::stdout().flush()?;
@@ -93,60 +107,61 @@ Select category:");
                     io::stdin().read_line(&mut cat_input)?;
                     if let Ok(idx) = cat_input.trim().parse::<usize>() {
                         if idx > 0 && idx <= categories.len() {
-                            let new_cat = categories[idx - 1];
-                            db.update_transaction(tx.id, &tx.merchant_name, &new_cat.to_string(), 1.0, "manual")?;
-                            let key = normalise_merchant_key(&tx.raw_description);
-                            db.cache_insert(&key, &ClassificationResult {
-                                merchant: tx.merchant_name.clone(),
-                                category: new_cat,
+                            let new_cat = &categories[idx - 1].name;
+                            let result = ClassificationResult {
+                                merchant: first.merchant_name.clone(),
+                                category: new_cat.clone(),
                                 confidence: 1.0,
                                 source: "manual".to_string(),
-                            })?;
-                            db.insert_few_shot_example(&key, &tx.raw_description, &tx.merchant_name, &new_cat.to_string())?;
-                            stats.corrected += 1;
-                            println!("Updated category to {}.", new_cat);
+                            };
+                            db.cache_insert(&key, &result)?;
+                            db.insert_few_shot_example(&key, &first.raw_description, &first.merchant_name, new_cat)?;
+
+                            for tx in group {
+                                db.update_transaction(tx.id, &first.merchant_name, new_cat, 1.0, "manual")?;
+                            }
+                            stats.corrected += group.len();
+                            stats.transactions += group.len();
+                            println!("Updated {} transactions to {}.", group.len(), new_cat);
                             break;
                         }
                     }
                     println!("Invalid category choice.");
                 }
                 "3" => {
-                    // Edit merchant
                     print!("New merchant name: ");
                     io::stdout().flush()?;
                     let mut merchant_input = String::new();
                     io::stdin().read_line(&mut merchant_input)?;
                     let new_merchant = merchant_input.trim();
                     if !new_merchant.is_empty() {
-                        db.update_transaction(tx.id, new_merchant, &tx.category, 1.0, "manual")?;
-                        let key = normalise_merchant_key(&tx.raw_description);
-                        db.cache_insert(&key, &ClassificationResult {
+                        let result = ClassificationResult {
                             merchant: new_merchant.to_string(),
-                            category: serde_json::from_value(serde_json::Value::String(tx.category.clone()))
-                                .unwrap_or(Category::Uncategorised),
+                            category: first.category.clone(),
                             confidence: 1.0,
                             source: "manual".to_string(),
-                        })?;
-                        db.insert_few_shot_example(&key, &tx.raw_description, new_merchant, &tx.category)?;
-                        stats.corrected += 1;
-                        println!("Updated merchant to {}.", new_merchant);
+                        };
+                        db.cache_insert(&key, &result)?;
+                        db.insert_few_shot_example(&key, &first.raw_description, new_merchant, &first.category)?;
+
+                        for tx in group {
+                            db.update_transaction(tx.id, new_merchant, &first.category, 1.0, "manual")?;
+                        }
+                        stats.corrected += group.len();
+                        stats.transactions += group.len();
+                        println!("Updated {} transactions to merchant {}.", group.len(), new_merchant);
                         break;
                     }
                     println!("Merchant name cannot be empty.");
                 }
                 "4" => {
-                    // Skip
-                    stats.skipped += 1;
-                    println!("Skipped.");
+                    stats.skipped += group.len();
+                    stats.transactions += group.len();
+                    println!("Skipped {} transactions.", group.len());
                     break;
                 }
                 "5" | "q" | "quit" => {
-                    println!("
-Review session summary:");
-                    println!("  Reviewed:  {}", stats.total);
-                    println!("  Confirmed: {}", stats.confirmed);
-                    println!("  Corrected: {}", stats.corrected);
-                    println!("  Skipped:   {}", stats.skipped);
+                    print_summary(&stats);
                     return Ok(());
                 }
                 _ => println!("Invalid choice."),
@@ -155,11 +170,15 @@ Review session summary:");
         println!();
     }
 
-    println!("Review complete.");
-    println!("  Reviewed:  {}", stats.total);
-    println!("  Confirmed: {}", stats.confirmed);
-    println!("  Corrected: {}", stats.corrected);
-    println!("  Skipped:   {}", stats.skipped);
-
+    print_summary(&stats);
     Ok(())
+}
+
+fn print_summary(stats: &ReviewStats) {
+    println!("\nReview complete.");
+    println!("  Groups reviewed: {}", stats.groups);
+    println!("  Transactions:    {}", stats.transactions);
+    println!("  Confirmed:       {}", stats.confirmed);
+    println!("  Corrected:       {}", stats.corrected);
+    println!("  Skipped:         {}", stats.skipped);
 }

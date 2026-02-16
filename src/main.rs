@@ -7,7 +7,7 @@ mod review;
 
 use std::path::Path;
 use classifier::Classifier;
-use db::Database;
+use db::{Database, CategoryInfo};
 use review::{run_review, ReviewFilters};
 
 #[derive(Default, Debug)]
@@ -33,6 +33,7 @@ fn import_file(
     db: &Database,
     classifier: &Classifier,
     csv_path: &Path,
+    categories: &[CategoryInfo],
 ) -> Result<ImportStats, Box<dyn std::error::Error>> {
     let transactions = csv_parser::parse_csv(csv_path)?;
     let total = transactions.len();
@@ -67,7 +68,7 @@ fn import_file(
         } else {
             stats.llm_calls += 1;
             let amount = tx.debit.or(tx.credit);
-            let res = classifier.classify(&tx.description, amount, &tx.details, &examples);
+            let res = classifier.classify(&tx.description, amount, &tx.details, &examples, categories);
             
             // Store in cache for future use
             db.cache_insert(&key, &res)?;
@@ -100,6 +101,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  import <path> [db_path] [model] [endpoint]");
         println!("  review [db_path] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
         println!("  reclassify [db_path] [model] [endpoint] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
+        println!("  categories list [db_path]");
+        println!("  categories add <name> <description> [db_path]");
         return Ok(());
     }
 
@@ -142,13 +145,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let db = Database::open(Path::new(db_path))?;
+            let categories = db.list_categories()?;
             run_review(&db, ReviewFilters {
                 category,
                 since,
                 until,
                 merchant,
                 threshold,
-            })
+            }, &categories)
         }
         "reclassify" => {
             let mut db_path = "data/budget.db";
@@ -196,6 +200,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 threshold,
             })
         }
+        "categories" => {
+            let sub = args.get(2).map(|s| s.as_str()).unwrap_or("list");
+            match sub {
+                "list" => {
+                    let db_path = args.get(3).map(|s| s.as_str()).unwrap_or("data/budget.db");
+                    let db = Database::open(Path::new(db_path))?;
+                    let cats = db.list_categories()?;
+                    println!("Spending Categories:");
+                    for cat in cats {
+                        println!("- {}: {}", cat.name, cat.description);
+                    }
+                    Ok(())
+                }
+                "add" => {
+                    let name = args.get(3).map(|s| s.as_str());
+                    let desc = args.get(4).map(|s| s.as_str());
+                    let db_path = args.get(5).map(|s| s.as_str()).unwrap_or("data/budget.db");
+                    
+                    if let (Some(n), Some(d)) = (name, desc) {
+                        let db = Database::open(Path::new(db_path))?;
+                        match db.add_category(n, d) {
+                            Ok(()) => println!("Added category: {}", n),
+                            Err(_) => println!("Error: category '{}' already exists.", n),
+                        }
+                        Ok(())
+                    } else {
+                        println!("Usage: budget-analyser categories add <name> <description> [db_path]");
+                        Ok(())
+                    }
+                }
+                _ => {
+                    println!("Unknown categories subcommand: {}", sub);
+                    Ok(())
+                }
+            }
+        }
         // Backward compatibility
         path => {
             let db_path = args.get(2).map(|s| s.as_str()).unwrap_or("data/budget.db");
@@ -217,6 +257,7 @@ fn run_reclassify(db_path: &str, model: &str, endpoint: &str, filters: ReviewFil
     let db = Database::open(Path::new(db_path))?;
     let classifier = Classifier::new(endpoint, model);
     let examples = db.get_few_shot_examples()?;
+    let categories = db.list_categories()?;
 
     let transactions = db.get_flagged_transactions(
         filters.threshold,
@@ -250,19 +291,19 @@ fn run_reclassify(db_path: &str, model: &str, endpoint: &str, filters: ReviewFil
         } else {
             llm_calls += 1;
             // Amount awareness: we don't have the original tx struct here, but we have amount
-            let res = classifier.classify(&tx.raw_description, Some(tx.amount), "", &examples);
+            let res = classifier.classify(&tx.raw_description, Some(tx.amount), "", &examples, &categories);
             
             // Store in cache
             db.cache_insert(&key, &res)?;
             res
         };
 
-        if result.category.to_string() != tx.category {
+        if result.category != tx.category {
             category_changes += 1;
             println!("  {} → {} (was {})", tx.raw_description, result.category, tx.category);
         }
 
-        db.update_transaction(tx.id, &result.merchant, &result.category.to_string(), result.confidence, &result.source)?;
+        db.update_transaction(tx.id, &result.merchant, &result.category, result.confidence, &result.source)?;
     }
 
     println!("\nReclassification Summary");
@@ -290,6 +331,7 @@ fn run_import(input_path: &str, db_path: &str, model: &str, endpoint: &str) -> R
     // Open database
     let db = Database::open(Path::new(db_path))?;
     let classifier = Classifier::new(endpoint, model);
+    let categories = db.list_categories()?;
 
     let metadata = std::fs::metadata(input_path)?;
     let mut files = Vec::new();
@@ -317,7 +359,7 @@ fn run_import(input_path: &str, db_path: &str, model: &str, endpoint: &str) -> R
 
     for (i, file_path) in files.iter().enumerate() {
         println!("Importing file {}/{}: {}", i + 1, total_files, file_path.display());
-        let file_stats = import_file(&db, &classifier, file_path)?;
+        let file_stats = import_file(&db, &classifier, file_path, &categories)?;
         
         println!("  File Summary: {} parsed, {} new, {} skipped, {} cache hits, {} llm calls",
             file_stats.total_parsed,

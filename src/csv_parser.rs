@@ -3,20 +3,21 @@ use serde::Deserialize;
 use std::path::Path;
 use std::io::{BufRead, BufReader};
 use std::fs::File;
+use encoding_rs_io::DecodeReaderBytesBuilder;
 
 #[derive(Debug, Clone)]
 pub struct Transaction {
     pub trade_date: NaiveDate,
-    pub booking_date: NaiveDate,
-    pub value_date: NaiveDate,
+    pub _booking_date: NaiveDate,
+    pub _value_date: NaiveDate,
     pub currency: String,
     pub debit: Option<f64>,
     pub credit: Option<f64>,
-    pub balance: f64,
+    pub _balance: f64,
     pub transaction_id: String,
     pub description: String,
     pub details: String,
-    pub footnotes: String,
+    pub _footnotes: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,17 +98,17 @@ fn parse_synthetic(path: &Path) -> Result<Vec<Transaction>, String> {
 
         let tx = Transaction {
             trade_date: parse_date(&raw.trade_date)?,
-            booking_date: parse_date(&raw.booking_date)?,
-            value_date: parse_date(&raw.value_date)?,
+            _booking_date: parse_date(&raw.booking_date)?,
+            _value_date: parse_date(&raw.value_date)?,
             currency: raw.currency,
             debit: parse_amount(&raw.debit),
             credit: parse_amount(&raw.credit),
-            balance: raw.balance.parse::<f64>()
+            _balance: raw.balance.parse::<f64>()
                 .map_err(|e| format!("Failed to parse balance on row {}: {}", i + 1, e))?,
             transaction_id: raw.transaction_id,
             description: raw.description,
             details: raw.details.unwrap_or_default(),
-            footnotes: raw.footnotes.unwrap_or_default(),
+            _footnotes: raw.footnotes.unwrap_or_default(),
         };
 
         transactions.push(tx);
@@ -147,7 +148,10 @@ fn parse_iso_date(s: &str) -> Result<NaiveDate, String> {
 
 fn parse_account_statement(path: &Path) -> Result<Vec<Transaction>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let mut reader = BufReader::new(file);
+    let transcoded = DecodeReaderBytesBuilder::new()
+        .encoding(Some(encoding_rs::WINDOWS_1252))
+        .build(file);
+    let mut reader = BufReader::new(transcoded);
     let mut skip_lines = 0;
     let header_line;
 
@@ -167,7 +171,10 @@ fn parse_account_statement(path: &Path) -> Result<Vec<Transaction>, String> {
 
     // Re-open file and skip lines to use csv crate
     let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let reader = BufReader::new(file);
+    let transcoded = DecodeReaderBytesBuilder::new()
+        .encoding(Some(encoding_rs::WINDOWS_1252))
+        .build(file);
+    let reader = BufReader::new(transcoded);
     let lines = reader.lines().skip(skip_lines + 1); // Skip preamble AND the header row we already read
     let mut content = header_line;
     for line in lines {
@@ -181,10 +188,23 @@ fn parse_account_statement(path: &Path) -> Result<Vec<Transaction>, String> {
         .from_reader(content.as_bytes());
 
     let mut transactions = Vec::new();
+    let mut last_date: Option<NaiveDate> = None;
 
     for (i, result) in csv_reader.deserialize().enumerate() {
         let raw: AccountRecord = result
             .map_err(|e| format!("Failed to parse account row {}: {}", i + 1, e))?;
+
+        // For rows with empty dates (standing orders), inherit from the previous row
+        let trade_date = if raw.trade_date.trim().is_empty() {
+            last_date.ok_or_else(|| format!("Row {} has empty date and no preceding date to inherit", i + 1))?
+        } else {
+            let d = parse_iso_date(&raw.trade_date)?;
+            last_date = Some(d);
+            d
+        };
+
+        let booking_date = if raw.booking_date.trim().is_empty() { trade_date } else { parse_iso_date(&raw.booking_date)? };
+        let value_date = if raw.value_date.trim().is_empty() { trade_date } else { parse_iso_date(&raw.value_date)? };
 
         let mut details_parts = Vec::new();
         if let Some(d2) = raw.description2 {
@@ -197,17 +217,17 @@ fn parse_account_statement(path: &Path) -> Result<Vec<Transaction>, String> {
         }
 
         let tx = Transaction {
-            trade_date: parse_iso_date(&raw.trade_date)?,
-            booking_date: parse_iso_date(&raw.booking_date)?,
-            value_date: parse_iso_date(&raw.value_date)?,
+            trade_date,
+            _booking_date: booking_date,
+            _value_date: value_date,
             currency: raw.currency,
             debit: parse_amount(&raw.debit).map(|v| v.abs()),
             credit: parse_amount(&raw.credit).map(|v| v.abs()),
-            balance: 0.0,
+            _balance: 0.0,
             transaction_id: raw.transaction_no,
             description: raw.description1,
             details: details_parts.join("; "),
-            footnotes: String::new(),
+            _footnotes: String::new(),
         };
 
         transactions.push(tx);
@@ -218,14 +238,17 @@ fn parse_account_statement(path: &Path) -> Result<Vec<Transaction>, String> {
 
 fn parse_credit_card(path: &Path) -> Result<Vec<Transaction>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let reader = BufReader::new(file);
-    
+    let transcoded = DecodeReaderBytesBuilder::new()
+        .encoding(Some(encoding_rs::WINDOWS_1252))
+        .build(file);
+    let reader = BufReader::new(transcoded);
+
     // Read the whole file to handle headers and skip 'sep=;'
     let mut lines = reader.lines();
-    
+
     // Skip 'sep=;' line
     lines.next().ok_or("Empty file")?.map_err(|e| format!("Failed to read sep line: {}", e))?;
-    
+
     // Read header line
     let header_line = lines.next().ok_or("Missing header line")?.map_err(|e| format!("Failed to read header line: {}", e))?;
 
@@ -263,16 +286,16 @@ fn parse_credit_card(path: &Path) -> Result<Vec<Transaction>, String> {
 
         let tx = Transaction {
             trade_date,
-            booking_date,
-            value_date: booking_date,
+            _booking_date: booking_date,
+            _value_date: booking_date,
             currency: raw.currency,
             debit: parse_amount(&raw.debit).map(|v| v.abs()),
             credit: parse_amount(&raw.credit).map(|v| v.abs()),
-            balance: 0.0,
+            _balance: 0.0,
             transaction_id: tx_id,
             description: raw.booking_text,
             details: raw.sector.unwrap_or_default(),
-            footnotes: String::new(),
+            _footnotes: String::new(),
         };
 
         transactions.push(tx);

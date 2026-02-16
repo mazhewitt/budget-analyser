@@ -16,6 +16,7 @@ pub enum Category {
     Cash,
     Transfers,
     Income,
+    Investments,
     Fees,
     Other,
     Uncategorised,
@@ -37,6 +38,7 @@ impl fmt::Display for Category {
             Category::Cash => write!(f, "Cash"),
             Category::Transfers => write!(f, "Transfers"),
             Category::Income => write!(f, "Income"),
+            Category::Investments => write!(f, "Investments"),
             Category::Fees => write!(f, "Fees"),
             Category::Other => write!(f, "Other"),
             Category::Uncategorised => write!(f, "Uncategorised"),
@@ -60,6 +62,7 @@ impl Category {
             Category::Cash => "ATM withdrawals",
             Category::Transfers => "Transfers between own accounts, savings",
             Category::Income => "Salary, refunds, reimbursements",
+            Category::Investments => "Buying and selling securities, stocks, bonds, funds, ETFs",
             Category::Fees => "Bank fees, card fees, foreign exchange fees",
             Category::Other => "Anything that doesn't fit above",
             Category::Uncategorised => "Transactions that could not be confidently classified",
@@ -81,17 +84,10 @@ impl Category {
             Category::Cash,
             Category::Transfers,
             Category::Income,
+            Category::Investments,
             Category::Fees,
             Category::Other,
             Category::Uncategorised,
         ]
-    }
-
-    pub fn schema_for_prompt() -> String {
-        let mut out = String::new();
-        for cat in Self::all() {
-            out.push_str(&format!("- {}: {}\n", cat, cat.description()));
-        }
-        out
     }
 }
