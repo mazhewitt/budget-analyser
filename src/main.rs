@@ -8,7 +8,7 @@ mod review;
 use std::path::Path;
 use classifier::Classifier;
 use db::{Database, CategoryInfo};
-use review::{run_review, ReviewFilters};
+use review::{run_review, run_recategorise, ReviewFilters};
 
 #[derive(Default, Debug)]
 struct ImportStats {
@@ -101,6 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  import <path> [db_path] [model] [endpoint]");
         println!("  review [db_path] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
         println!("  reclassify [db_path] [model] [endpoint] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
+        println!("  recategorise --category <name> [db_path]");
         println!("  categories list [db_path]");
         println!("  categories add <name> <description> [db_path]");
         return Ok(());
@@ -199,6 +200,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 merchant,
                 threshold,
             })
+        }
+        "recategorise" => {
+            let mut db_path = "data/budget.db";
+            let mut category = None;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--category" => { category = args.get(i + 1).map(|s| s.as_str()); i += 2; }
+                    path if !path.starts_with("--") => {
+                        db_path = path;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+            }
+
+            if let Some(cat) = category {
+                let db = Database::open(Path::new(db_path))?;
+                let categories = db.list_categories()?;
+                run_recategorise(&db, cat, &categories)
+            } else {
+                println!("Usage: budget-analyser recategorise --category <name> [db_path]");
+                Ok(())
+            }
         }
         "categories" => {
             let sub = args.get(2).map(|s| s.as_str()).unwrap_or("list");

@@ -362,4 +362,34 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn get_transactions_by_category(&self, category: &str) -> Result<Vec<StoredTransaction>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, date, raw_description, amount, currency, merchant_name, category, source, confidence, transaction_id 
+             FROM transactions 
+             WHERE category = ? 
+             ORDER BY date ASC"
+        )?;
+
+        let rows = stmt.query_map(params![category], |row| {
+            Ok(StoredTransaction {
+                id: row.get(0)?,
+                date: row.get(1)?,
+                raw_description: row.get(2)?,
+                amount: row.get(3)?,
+                currency: row.get(4)?,
+                merchant_name: row.get(5)?,
+                category: row.get(6)?,
+                _source: row.get(7)?,
+                confidence: row.get(8)?,
+                _transaction_id: row.get(9)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
 }
