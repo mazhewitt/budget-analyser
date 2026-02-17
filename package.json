@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "eslint": "^9",
+    "@eslint/js": "^9",
+    "globals": "^15"
+  },
+  "scripts": {
+    "lint": "eslint static/"
+  }
+}

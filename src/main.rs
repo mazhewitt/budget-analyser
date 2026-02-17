@@ -1,14 +1,25 @@
 mod cache;
 mod categories;
 mod classifier;
+mod config;
 mod csv_parser;
 mod db;
 mod review;
+mod ai;
+mod chat;
+mod tools;
 
 use std::path::Path;
+use axum::Router;
+use tower_http::services::ServeDir;
 use classifier::Classifier;
+use config::Config;
 use db::{Database, CategoryInfo};
 use review::{run_review, run_recategorise, ReviewFilters};
+use ai::agent::{Agent, build_system_prompt};
+use ai::llm::LlmProvider;
+use chat::{ChatState, router as chat_router};
+use tools::ToolRegistry;
 
 #[derive(Default, Debug)]
 struct ImportStats {
@@ -92,13 +103,15 @@ fn import_file(
     Ok(stats)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
         println!("Usage: budget-analyser <command> [args]");
         println!("Commands:");
         println!("  import <path> [db_path] [model] [endpoint]");
+        println!("  serve");
         println!("  review [db_path] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
         println!("  reclassify [db_path] [model] [endpoint] [--category C] [--since S] [--until U] [--merchant M] [--threshold T]");
         println!("  recategorise --category <name> [db_path]");
@@ -117,6 +130,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let endpoint = args.get(5).map(|s| s.as_str()).unwrap_or("http://localhost:11434");
 
             run_import(input_path, db_path, model, endpoint)
+        }
+        "serve" | "chat" => {
+            let config = Config::from_env().map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+            run_server(config).await
         }
         "review" => {
             let mut db_path = "data/budget.db";
@@ -271,6 +288,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_import(path, db_path, model, endpoint)
         }
     }
+}
+
+async fn run_server(config: Config) -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .init();
+
+    let pool = db::connect_pool(&config.database_url).await?;
+    let data_summary = db::load_data_summary(&pool).await?;
+    tracing::info!(
+        "data summary loaded: {} transactions ({} to {})",
+        data_summary.total_transactions,
+        data_summary.min_date.as_deref().unwrap_or("unknown"),
+        data_summary.max_date.as_deref().unwrap_or("unknown")
+    );
+
+    let categories = sqlx::query_as::<_, (String, String)>("SELECT name, description FROM categories")
+        .fetch_all(&pool)
+        .await?
+        .into_iter()
+        .map(|(name, description)| CategoryInfo { name, description })
+        .collect::<Vec<_>>();
+
+    let llm = LlmProvider::new(config.anthropic_api_key, "claude-sonnet-4-5-20250929".to_string());
+    let tools = ToolRegistry::new();
+    let system_prompt = build_system_prompt(&data_summary, &categories);
+    let agent = Agent::new(llm, tools, system_prompt, pool.clone());
+
+    let sessions = chat::SessionStore::new();
+    let chat_state = ChatState { agent, sessions };
+
+    let static_router = Router::new().nest_service("/", ServeDir::new("static"));
+    let app = static_router.merge(chat_router(chat_state));
+
+    let listener = tokio::net::TcpListener::bind(&config.bind_address).await?;
+    tracing::info!("chat server listening on {}", &config.bind_address);
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }
 
 fn run_reclassify(db_path: &str, model: &str, endpoint: &str, filters: ReviewFilters) -> Result<(), Box<dyn std::error::Error>> {

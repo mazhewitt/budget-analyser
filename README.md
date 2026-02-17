@@ -1,6 +1,6 @@
 # Budget Analyser
 
-Categorises UBS bank transactions using a local LLM (Ollama) and stores results in SQLite for analysis.
+Categorises UBS bank transactions using a local LLM (Ollama) and stores results in SQLite for analysis. Includes an interactive chat interface powered by Claude for natural-language budget queries with inline charts.
 
 Supports three CSV formats:
 - UBS account statement export (semicolon-separated, metadata preamble)
@@ -12,18 +12,19 @@ Format is auto-detected from file headers.
 ## Prerequisites
 
 - Rust toolchain
-- [Ollama](https://ollama.com) running locally with a model pulled (default: `qwen3:8b`)
-- Python 3 + `pandas` + `matplotlib` (for the notebook)
+- [Ollama](https://ollama.com) running locally with a model pulled (default: `qwen3:8b`) — for import/classification
+- `ANTHROPIC_API_KEY` environment variable — for the chat server
+- Python 3 + `polars` (for the analysis notebook, optional)
 
 ```bash
-# Pull the default model
+# Pull the default model (for import)
 ollama pull qwen3:8b
 
 # Build the project
 cargo build --release
 ```
 
-## Workflow
+## Phase 1: Import & Classify (CLI)
 
 ### 1. Drop your data files
 
@@ -103,3 +104,57 @@ The notebook connects to `data/budget.db` and provides:
 - Monthly spending breakdown by category (stacked bar)
 - Classification quality metrics
 - Income vs spending comparison
+
+## Phase 2: Interactive Chat Server
+
+An LLM-powered chat interface that lets you ask questions about your spending in natural language, with inline charts rendered automatically.
+
+### Setup
+
+Set your Anthropic API key:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+Optionally configure the bind address and database path (defaults shown):
+
+```bash
+export BIND_ADDRESS="127.0.0.1:3000"
+export DATABASE_URL="data/budget.db"
+```
+
+### Start the server
+
+```bash
+cargo run --release -- serve
+```
+
+Then open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### What you can ask
+
+The chat agent has access to four analysis tools that query your transaction database directly:
+
+| Tool | Description |
+|------|-------------|
+| `spending_by_category` | Totals by category, with optional year/month filters |
+| `monthly_trend` | Monthly spending over time, with optional category/year filters |
+| `merchant_breakdown` | Top merchants within a category |
+| `income_vs_spending` | Monthly income vs spending comparison, optional year filter |
+
+Example questions:
+- "How much did I spend on groceries last month?"
+- "Show me my monthly spending trend for 2025"
+- "What are my top merchants in the Dining category?"
+- "Compare my income vs spending this year"
+
+The agent will call tools as needed and return results with inline charts (bar, horizontal bar, pie, and grouped bar) rendered via Frappe Charts.
+
+### Architecture
+
+- **Backend**: Rust + Axum, streaming responses via SSE
+- **LLM**: Claude (Anthropic API) with an agentic tool-calling loop (up to 10 iterations)
+- **Frontend**: Vanilla JavaScript, no build step
+- **Charts**: Frappe Charts, delivered as SSE `chart_artifact` events
+- **Sessions**: In-memory with 2-hour TTL (conversation history is lost on restart)

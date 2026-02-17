@@ -1,36 +1,34 @@
-# UBS Transaction Categoriser
+# Budget Analyser
 
 ## Overview
 
-A local-first, AI-first financial tracking application that extracts transaction history from UBS accounts, classifies cryptic merchant strings using local LLMs, and provides a web-based interface for reviewing, correcting, and querying spending data. Designed for a single user running on a Mac Studio with 32GB unified memory.
+A personal financial tracking application that imports transaction history from UBS accounts, classifies cryptic merchant strings using LLMs, and provides an interactive AI chat interface for exploring spending data. Designed for a single user running locally on a Mac Studio.
 
 ## Goals
 
-Turn opaque bank statements into a clear, categorised view of spending habits — without sending financial data to any cloud service — through an interactive web interface where the AI does the heavy lifting and the human handles the edge cases.
+Turn opaque bank statements into a clear, categorised view of spending habits — through an interactive chat where the AI does the heavy lifting and the human steers the analysis.
 
 Specifically:
 
 1. **Import**: Parse UBS CSV exports into a structured format, handling Swiss-specific formatting (apostrophe thousands separators, mixed currency transactions). Detect and skip duplicate imports.
-2. **Classify**: Use local LLMs to interpret cryptic merchant descriptions and map them to normalised merchant names and spending categories. Build a merchant cache that learns over time so the LLM handles cold starts while repeated merchants resolve instantly.
-3. **Review**: Surface low-confidence and unclassifiable transactions as tasks in the web UI. The user reviews and corrects them; corrections feed back into the system as dynamic few-shot examples, improving future classification accuracy.
-4. **Query**: Ask natural language questions about spending ("How much did I spend on travel in October?") through an AI chat interface. The AI uses tool calling to invoke a small set of predefined query functions backed by Polars DataFrames — no raw SQL generation. The AI picks the right tool, the system executes it, and the AI explains the results in plain language.
+2. **Classify**: Use LLMs to interpret cryptic merchant descriptions and map them to normalised merchant names and spending categories. Build a merchant cache that learns over time so the LLM handles cold starts while repeated merchants resolve instantly.
+3. **Analyse**: Ask natural language questions about spending ("How much did I spend on dining this year?", "Break down groceries by store") through an AI chat interface. The AI uses tool calling to query the database, generate charts, and explain the results conversationally.
+4. **Recategorise**: Correct misclassifications through the chat interface. The AI updates the database and the corrections improve future analysis.
 5. **Store**: Persist everything in SQLite for querying, trend analysis, and long-term history.
 
 ## Design Principles
 
-**Local-only processing.** All transaction data stays on the Mac Studio. No cloud APIs, no data leaving the machine. The unified memory architecture is more than sufficient for running quantised models at the scale required.
-
 **Manual CSV import.** Switzerland lacks mandated Open Banking APIs. Rather than building brittle scraping against the UBS web interface, we accept a monthly manual CSV export. This is a reliable, stable data source that won't break when UBS updates their frontend.
 
-**AI-first interaction.** The web interface is designed around AI assistance, not traditional forms and filters. The primary interaction modes are: (1) reviewing AI-suggested classifications, (2) asking questions in natural language, and (3) correcting the AI when it gets things wrong. The UI is lightweight and task-driven — not a dashboard overloaded with charts.
+**AI-first interaction.** The primary interface is a chat. The user asks questions in natural language; the AI picks the right tools, runs queries, renders charts, and explains what it finds. No dashboards, no forms — just a conversation about your money.
 
-**Two-model strategy.** Use a smaller model (Qwen3 8B) for high-throughput transaction classification where speed matters, and a larger model (Gemma3 27B) for deeper reasoning tasks: understanding natural language queries, selecting the right query tools, and explaining spending patterns. Both run locally via Ollama.
+**Tool use over SQL generation.** The chat interface exposes a small set of coarse-grained query tools via the Claude API's tool calling. The LLM's job is to pick the right tool and parameters — the actual data work happens in Rust functions querying SQLite directly. This is safer, more reliable, and keeps the tool interface as a clear contract between the AI and the system. A raw SQL tool may be added later as an escape hatch with read-only guardrails.
 
-**Tool use over SQL generation.** Rather than having the LLM generate raw SQL (fragile, hard to sandbox, unreliable at 27B scale), the chat interface exposes a small set of coarse-grained query tools via Ollama's tool calling API. The LLM's job is to pick the right tool and parameters — the actual data work happens in Polars DataFrames on the Rust side. This is safer, more reliable, and keeps the tool interface as a clear contract between the AI and the system.
+**Chart artifacts.** When a tool returns data suitable for visualisation, the server emits a `chart_artifact` SSE event alongside the text stream. The browser renders charts inline using Frappe Charts. The LLM doesn't need to know the charting library — it calls a tool, the tool returns structured chart data, and the frontend renders it.
 
-**LLM as cold-start engine, not permanent dependency.** The LLM's job is to bootstrap the merchant cache. Over time, the vast majority of transactions resolve from the cache and the LLM is only invoked for genuinely new merchants. This keeps the system fast and deterministic where it can be.
+**LLM as cold-start engine, not permanent dependency.** For classification, the LLM bootstraps the merchant cache. Over time, the vast majority of transactions resolve from the cache and the LLM is only invoked for genuinely new merchants. This keeps classification fast and deterministic where it can be.
 
-**Dynamic few-shot learning.** When the user corrects a misclassification, the correction is stored as an example keyed by merchant pattern. These examples are dynamically injected into the LLM prompt, so the system learns from its mistakes without retraining. Over time, the prompt becomes increasingly tailored to this user's specific transaction patterns.
+**Dynamic few-shot learning.** When the user corrects a misclassification, the correction is stored as an example keyed by merchant pattern. These examples are dynamically injected into the LLM prompt, so the system learns from its mistakes without retraining.
 
 **Amount-aware classification.** Monetary values are essential context for accurate categorisation. A 6 CHF transaction at Coop Pronto is a coffee; a 145 CHF transaction at the same merchant is a grocery shop. The LLM receives the full transaction including amount.
 
@@ -50,10 +48,12 @@ A flat, single-level category list. Kept deliberately simple — over-engineerin
 | Subscriptions | Streaming, software, newspapers, memberships, phone plan |
 | Children | Childcare, school, activities, toys, children's clothing |
 | Travel | Hotels, flights, holiday expenses |
+| Investments | Pension contributions, ETFs, investment fund purchases |
 | Cash | ATM withdrawals |
 | Transfers | Transfers between own accounts, savings |
 | Income | Salary, refunds, reimbursements |
 | Fees | Bank fees, card fees, foreign exchange fees |
+| Taxes | Federal, cantonal, and municipal tax payments |
 | Other | Anything that doesn't fit above |
 
 ## Data Model
@@ -78,118 +78,112 @@ Four core tables:
 
 ## Tech Stack
 
-- **Rust** for the backend (parsing, orchestration, LLM calls, web server)
-- **Axum** for the HTTP server
-- **HTMX + server-rendered HTML** for the web UI (Tera or Askama templates). Lightweight, no JS build toolchain. HTMX handles interactivity (review queue updates, chat messages, import progress).
-- **SQLite** for storage and persistence (via rusqlite or sqlx)
-- **Polars** for in-memory analytics and query execution. Transaction data is loaded from SQLite into DataFrames for fast filtering, grouping, and aggregation.
-- **Ollama** for local LLM inference (with tool calling support)
-- **Models:** Qwen3 8B for classification, Gemma3 27B for chat/query reasoning
+### Phase 1 (Python — data pipeline)
 
-## Query Tools
+- **Python** for CSV parsing, LLM classification, and exploratory analysis
+- **SQLite** for storage and persistence
+- **Polars** for data analysis in Jupyter notebooks
+- **Ollama** for local LLM inference (classification)
+- **Models:** Qwen3 8B for classification
 
-The chat interface exposes these tools to Gemma3 27B via Ollama's tool calling API. Each tool maps to a Polars query on the Rust side.
+### Phase 2 (Rust — chat application)
+
+- **Rust** for the backend (web server, agent loop, tool execution)
+- **Axum** for the HTTP server and SSE streaming
+- **Vanilla JavaScript** for the browser chat UI (no framework, no build step)
+- **Frappe Charts** for inline chart rendering in chat
+- **SQLite** for storage and persistence (via sqlx)
+- **Claude API** (Anthropic) for the chat agent with tool calling
+- **Architecture pattern** adapted from [recipe-vault](../recipe-vault): Axum server + agent loop + SSE streaming + vanilla JS frontend
+
+## Analysis Tools
+
+The chat agent has access to these tools. Each tool queries SQLite directly and returns structured data plus optional chart specifications for the frontend to render.
 
 | Tool | Parameters | Returns |
 |---|---|---|
-| `spending_by_category` | `year`, `month?` | Table of categories with totals and transaction counts |
-| `spending_by_merchant` | `year`, `month?`, `top_n?` | Table of merchants ranked by spend |
-| `spending_trend` | `category?`, `months?` | Monthly time series of spending |
-| `search_transactions` | `query?`, `category?`, `min_amount?`, `max_amount?`, `year?`, `month?` | Filtered transaction list |
-| `summary` | `year`, `month?` | Overall income, expenses, and balance |
+| `spending_by_category` | `year?`, `month?` | Table of categories with totals and transaction counts, horizontal bar chart |
+| `monthly_trend` | `category?`, `year?` | Monthly time series of spending, vertical bar chart |
+| `merchant_breakdown` | `category`, `top_n?` | Top merchants ranked by spend with pie + bar charts |
+| `income_vs_spending` | `year?` | Monthly income vs expenses, grouped bar chart |
+| `recategorise` | `merchant_name`, `new_category` | Updates transactions and merchant cache, confirmation |
 
-The LLM picks the tool and parameters; the system executes it and returns structured data; the LLM explains the result in plain language. This keeps the interface tight enough for a 27B model to use reliably.
+Tools return both a text summary (for the LLM to narrate) and a chart specification (for the frontend to render). The LLM never sees chart rendering details — it just calls the tool and explains the results.
 
-## Web Interface
+## SSE Protocol
 
-Three primary views:
+The chat endpoint streams responses using Server-Sent Events, adapted from the recipe-vault pattern:
 
-**Import** — Upload a UBS CSV, see classification progress in real-time, review summary of what was imported and how transactions were categorised.
-
-**Review Queue** — A task list of transactions the AI couldn't confidently classify. Each task shows the transaction details, the AI's best guess, and lets the user pick the correct category/merchant. Corrections are saved as few-shot examples.
-
-**Chat** — A conversational interface for querying spending data. The user asks natural language questions; Gemma3 27B selects the appropriate query tool via function calling; the system executes it against Polars DataFrames; and the AI explains the results. Responses include both the data and a plain-language explanation.
+| Event | Data | Purpose |
+|---|---|---|
+| `chunk` | `{"text": "..."}` | Streaming text from the LLM |
+| `tool_use` | `{"tool": "...", "status": "..."}` | Tool call indicator |
+| `chart_artifact` | `{"type": "bar", "title": "...", "data": {...}}` | Chart for Frappe Charts to render |
+| `done` | `{"conversation_id": "...", "tools_used": [...]}` | Conversation turn complete |
+| `error` | `{"message": "..."}` | Error |
 
 ## Implementation Roadmap
 
-Two phases: first build a reliable data pipeline and get a year of clean data into SQLite, then layer the AI query interface on top.
+---
+
+### Phase 1: Data Pipeline (complete)
+
+Build a reliable data pipeline and get clean, classified data into SQLite.
+
+**What was delivered:**
+
+- Python-based CSV import pipeline with LLM classification via Ollama
+- SQLite database (`data/budget.db`) with 7,300+ classified transactions
+- Merchant cache providing ~65% cache hit rate, reducing LLM calls over time
+- Dynamic few-shot examples from manual corrections
+- Jupyter notebook (`analysis.ipynb`) with comprehensive analysis: spending by category, monthly trends, merchant breakdowns, income vs spending, deep dives into Groceries, Shopping, Dining, and Other categories
+
+**What was learned during Phase 1:**
+
+The Jupyter notebook analysis revealed the kinds of questions and interactions that the chat interface needs to support: category breakdowns, merchant-level deep dives, identifying and fixing misclassifications (e.g. Baloise Life Ltd from Insurance → Investments), grouping merchant name variants (Migros, Digitec/Galaxus), and cutting long-tail noise in visualisations. These patterns directly inform the tool design for Phase 2.
 
 ---
 
-### Phase 1: Data Pipeline
+### Phase 2: Interactive Chat
 
-Get the data right first. Feed a year of UBS exports through the system, classify everything with local LLMs, clean up edge cases via CLI, and produce a SQLite database that can be explored directly with Python Polars. No web UI in this phase.
+With clean, classified data in hand, build the chat application. The architecture is adapted from recipe-vault — an Axum server with an agent loop, SSE streaming, and a vanilla JS frontend.
 
-#### Change 1: `sqlite-storage`
+#### Change 1: `chat-mvp`
 
-Replace the POC's in-memory structures with persistent SQLite storage. Create the `transactions`, `merchant_cache`, and `import_log` tables. Migrate the CSV parser to write into SQLite. Add duplicate detection on import (by transaction_id). Update the category enum to match the expanded 15-category schema. The merchant cache becomes a database table instead of a HashMap — lookups and inserts go through SQLite. Still CLI-driven.
+The minimum viable chat: a working end-to-end conversation loop where the user can ask about their spending and get answers with inline charts.
 
-**Depends on:** POC (complete)
-**Delivers:** A working import pipeline that persists data and prevents duplicate imports.
-
-#### Change 2: `batch-import`
-
-Support importing multiple CSV files (a year of monthly exports) in a single CLI run. Process them chronologically. The merchant cache builds up across files — early imports train the cache, later imports benefit from it. Print a summary after each file: total transactions, cached hits, LLM classifications, flagged items. At the end, print an overall report across all files.
-
-**Depends on:** `sqlite-storage`
-**Delivers:** One command to import a full year of data.
-
-#### Change 3: `cli-review`
-
-Add a CLI review mode for cleaning up flagged transactions. List all transactions where `confidence < threshold` or `category = 'Other'`. For each one, show the description, amount, details, and the LLM's best guess. Accept user input: confirm, re-categorise, or edit merchant name. Update the transaction and merchant cache in SQLite. Support filtering by category, date range, or merchant to review in batches.
-
-**Depends on:** `sqlite-storage`
-**Delivers:** Manual correction workflow without needing a web UI.
-
-#### Change 4: `dynamic-few-shot`
-
-Add the `few_shot_examples` table. When a user corrects a transaction in the CLI review, store the correction as a few-shot example keyed by normalised merchant pattern. Update the classification prompt builder to load relevant examples from SQLite and inject them into the system prompt dynamically. Add a `reclassify` CLI command that re-runs the LLM on all flagged transactions using the improved prompt. Re-importing a fresh CSV should now benefit from past corrections.
-
-**Depends on:** `cli-review`
-**Delivers:** The system learns from corrections. Classification accuracy improves over time.
-
-#### Phase 1 outcome
-
-After completing Phase 1, you have:
-- A SQLite database (`data/budget.db`) containing a full year of classified transactions
-- A merchant cache that's been trained on your actual spending patterns
-- Few-shot examples from your corrections that improve future classification
-- A database you can query directly with Python Polars in a Jupyter notebook or script:
-
-```python
-import polars as pl
-
-df = pl.read_database("SELECT * FROM transactions", "sqlite:///data/budget.db")
-
-# Monthly spending by category
-df.filter(pl.col("category") == "Transport") \
-  .group_by(pl.col("date").dt.month()) \
-  .agg(pl.col("amount").sum())
-```
-
----
-
-### Phase 2: AI Query Interface
-
-With clean, classified data in hand, build the web interface and AI query layer.
-
-#### Change 5: `web-skeleton`
-
-Stand up the Axum web server with HTMX and server-rendered templates. Create the basic layout (navigation shell, views for Import, Review, and Chat). Add the CSV upload endpoint — the user uploads a file through the browser, the server runs the existing import + classification pipeline, and returns a summary page. Move the CLI review workflow to a web-based review queue with the same confirm/re-categorise/edit controls.
+**Scope:**
+- Axum server serving static files and a chat endpoint
+- LLM provider for Claude API (adapted from recipe-vault)
+- Agent loop: receive message → call LLM → execute tools → stream response
+- SSE streaming of text chunks, tool use indicators, and chart artifacts
+- Four read-only analysis tools: `spending_by_category`, `monthly_trend`, `merchant_breakdown`, `income_vs_spending`
+- Browser chat UI: message input, streaming text display, Frappe Charts rendering for chart artifacts
+- In-memory session management (conversation history)
+- No auth (single user, local only)
 
 **Depends on:** Phase 1 complete
-**Delivers:** Browser-based import and review workflow.
+**Delivers:** A browser-based chat where you can ask spending questions and get narrative answers with charts.
 
-#### Change 6: `polars-analytics`
+#### Change 2: `recategorise-tool`
 
-Add Polars as a Rust dependency. On server startup (and after each import), load transaction data from SQLite into a Polars DataFrame held in memory. Implement the five query tool functions (`spending_by_category`, `spending_by_merchant`, `spending_trend`, `search_transactions`, `summary`) as Rust functions operating on the DataFrame. Expose these as internal API endpoints (JSON responses). No AI chat yet — this is the data layer that the chat will call.
+Add the write path. The user can tell the chat to recategorise merchants, and the AI updates the database.
 
-**Depends on:** `web-skeleton`
-**Delivers:** Fast, in-memory analytics engine with a defined tool interface.
+**Scope:**
+- `recategorise` tool: updates category on all matching transactions and the merchant cache
+- Confirmation flow: the LLM confirms what it's about to change before executing
+- Merchant name grouping (e.g. "group all Migros variants together") as a display-level feature
 
-#### Change 7: `ai-chat`
+**Depends on:** `chat-mvp`
+**Delivers:** Conversational recategorisation — no more running raw SQL to fix categories.
 
-Build the chat view. Add an Ollama client configured for Gemma3 27B with tool calling. Define the five query tools as Ollama function definitions. The user types a question; the server sends it to Gemma3 with the tool definitions; if the model calls a tool, the server executes the corresponding Polars function and sends the result back; the model generates a natural language response. Render the conversation in the chat view using HTMX streaming or polling.
+---
 
-**Depends on:** `polars-analytics`
-**Delivers:** Natural language querying of spending data through the browser.
+### Phase 3: Extended capabilities (future)
+
+These are potential follow-on changes, not yet committed:
+
+- **`sql-escape-hatch`** — Raw SQL tool with read-only guardrails for ad-hoc queries the predefined tools can't handle
+- **`csv-import-chat`** — Import new CSV files through the chat interface, with classification progress streaming
+- **`review-queue`** — Surface low-confidence transactions for review, either as a dedicated view or as a chat-driven workflow
+- **`reusable-agent-lib`** — Extract the agent loop, LLM provider, SSE streaming, and tool framework into a shared Rust crate for use across projects (recipe-vault, budget-analyser, and future tools)
