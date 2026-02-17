@@ -44,6 +44,7 @@ pub struct SseChartArtifact {
 
 #[derive(Serialize)]
 pub struct SseDone {
+    pub conversation_id: String,
     pub stop_reason: Option<String>,
 }
 
@@ -132,7 +133,10 @@ pub async fn chat(
                 };
                 let done_event = Event::default()
                     .event("done")
-                    .json_data(SseDone { stop_reason: reason });
+                    .json_data(SseDone {
+                        conversation_id: conversation_id.clone(),
+                        stop_reason: reason
+                    });
                 if let Ok(evt) = done_event {
                     yield Ok(evt);
                 }

@@ -96,6 +96,14 @@ class ChatManager {
                 console.error('Failed to parse chart:', e);
             }
         } else if (eventType === 'done') {
+            try {
+                const doneData = JSON.parse(jsonData);
+                if (doneData.conversation_id) {
+                    this.conversationId = doneData.conversation_id;
+                }
+            } catch (e) {
+                console.error('Failed to parse done event:', e);
+            }
             this.unlockInput();
         } else if (eventType === 'error') {
             try {
