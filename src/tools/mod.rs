@@ -100,6 +100,37 @@ impl ToolRegistry {
 					}),
 				},
 				ToolDefinition {
+					name: "search_transactions".to_string(),
+					description: "Search transactions by merchant name or description. Returns total spend, count, average, date range, merchant name variants, and a monthly spending chart.".to_string(),
+					input_schema: json!({
+						"type": "object",
+						"properties": {
+							"search": { "type": "string", "description": "Search term to match against merchant name or raw description" },
+							"category": { "type": "string" },
+							"year": { "type": "integer" },
+							"month": { "type": "integer" }
+						},
+						"required": ["search"],
+						"additionalProperties": false
+					}),
+				},
+				ToolDefinition {
+					name: "list_transactions".to_string(),
+					description: "List individual transactions matching a search term. Returns date, amount, merchant, and raw description for each transaction.".to_string(),
+					input_schema: json!({
+						"type": "object",
+						"properties": {
+							"search": { "type": "string", "description": "Search term to match against merchant name or raw description" },
+							"category": { "type": "string" },
+							"year": { "type": "integer" },
+							"month": { "type": "integer" },
+							"limit": { "type": "integer", "description": "Max rows to return (default 50)" }
+						},
+						"required": ["search"],
+						"additionalProperties": false
+					}),
+				},
+				ToolDefinition {
 					name: "income_vs_spending".to_string(),
 					description: "Compare monthly income vs spending with optional year filter.".to_string(),
 					input_schema: json!({
@@ -129,6 +160,8 @@ impl ToolRegistry {
 			"monthly_trend" => monthly_trend(pool, input).await,
 			"merchant_breakdown" => merchant_breakdown(pool, input).await,
 			"income_vs_spending" => income_vs_spending(pool, input).await,
+			"search_transactions" => search_transactions(pool, input).await,
+			"list_transactions" => list_transactions(pool, input).await,
 			_ => Err(ToolError::InvalidInput(format!("Unknown tool: {}", name))),
 		}
 	}
@@ -155,6 +188,48 @@ struct MerchantBreakdownInput {
 #[derive(Debug, Deserialize)]
 struct IncomeVsSpendingInput {
 	year: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TransactionSearchInput {
+	search: String,
+	category: Option<String>,
+	year: Option<i32>,
+	month: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListTransactionsInput {
+	search: String,
+	category: Option<String>,
+	year: Option<i32>,
+	month: Option<u32>,
+	limit: Option<i64>,
+}
+
+/// Build WHERE clause and params for transaction search.
+/// Matches `search` term against merchant_name and raw_description (case-insensitive LIKE).
+fn build_search_conditions(search: &str, category: &Option<String>, year: &Option<i32>, month: &Option<u32>) -> (Vec<String>, Vec<String>) {
+	let mut conditions = vec![
+		"amount < 0".to_string(),
+		"(LOWER(merchant_name) LIKE '%' || LOWER(?) || '%' OR LOWER(raw_description) LIKE '%' || LOWER(?) || '%')".to_string(),
+	];
+	let mut params = vec![search.to_string(), search.to_string()];
+
+	if let Some(cat) = category {
+		conditions.push("category = ?".to_string());
+		params.push(cat.clone());
+	}
+	if let Some(y) = year {
+		conditions.push("strftime('%Y', date) = ?".to_string());
+		params.push(y.to_string());
+	}
+	if let Some(m) = month {
+		conditions.push("strftime('%m', date) = ?".to_string());
+		params.push(format!("{:02}", m));
+	}
+
+	(conditions, params)
 }
 
 async fn spending_by_category(
@@ -478,5 +553,162 @@ async fn income_vs_spending(
 	Ok(ToolOutput {
 		summary,
 		charts: vec![chart],
+	})
+}
+
+async fn search_transactions(
+	pool: &SqlitePool,
+	input: serde_json::Value,
+) -> Result<ToolOutput, ToolError> {
+	let input: TransactionSearchInput = serde_json::from_value(input)
+		.map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+
+	let (conditions, params) = build_search_conditions(&input.search, &input.category, &input.year, &input.month);
+	let where_clause = format!("WHERE {}", conditions.join(" AND "));
+
+	// Summary query: total spend, count, avg, date range
+	let summary_query = format!(
+		"SELECT -SUM(amount) as total_spend, COUNT(*) as count, AVG(-amount) as avg_spend, MIN(date) as min_date, MAX(date) as max_date FROM transactions {}",
+		where_clause
+	);
+
+	let mut args = SqliteArguments::default();
+	for param in &params {
+		let _ = args.add(param.clone());
+	}
+	let summary_row = sqlx::query_with(&summary_query, args).fetch_one(pool).await?;
+
+	let total_spend: f64 = summary_row.try_get("total_spend").unwrap_or(0.0);
+	let count: i64 = summary_row.try_get("count").unwrap_or(0);
+
+	if count == 0 {
+		return Ok(ToolOutput {
+			summary: format!("No transactions found matching \"{}\".", input.search),
+			charts: Vec::new(),
+		});
+	}
+
+	let avg_spend: f64 = summary_row.try_get("avg_spend").unwrap_or(0.0);
+	let min_date: String = summary_row.try_get("min_date").unwrap_or_else(|_| "?".to_string());
+	let max_date: String = summary_row.try_get("max_date").unwrap_or_else(|_| "?".to_string());
+
+	// Distinct merchant names
+	let merchants_query = format!(
+		"SELECT DISTINCT merchant_name FROM transactions {} ORDER BY merchant_name",
+		where_clause
+	);
+	let mut args2 = SqliteArguments::default();
+	for param in &params {
+		let _ = args2.add(param.clone());
+	}
+	let merchant_rows = sqlx::query_with(&merchants_query, args2).fetch_all(pool).await?;
+	let merchants: Vec<String> = merchant_rows.iter()
+		.map(|row| row.try_get::<String, _>("merchant_name").unwrap_or_else(|_| "Unknown".to_string()))
+		.collect();
+
+	let summary = format!(
+		"Search \"{}\": {} transactions, CHF {:.2} total, avg CHF {:.2}, range {} to {}. Merchant names: {}.",
+		input.search, count, total_spend, avg_spend, min_date, max_date, merchants.join(", ")
+	);
+
+	// Monthly trend chart
+	let trend_query = format!(
+		"SELECT strftime('%Y-%m', date) as month, -SUM(amount) as spend FROM transactions {} GROUP BY month ORDER BY month ASC",
+		where_clause
+	);
+	let mut args3 = SqliteArguments::default();
+	for param in &params {
+		let _ = args3.add(param.clone());
+	}
+	let trend_rows = sqlx::query_with(&trend_query, args3).fetch_all(pool).await?;
+
+	let mut labels = Vec::new();
+	let mut values = Vec::new();
+	for row in trend_rows.iter() {
+		let month: String = row.try_get("month").unwrap_or_else(|_| "Unknown".to_string());
+		let spend: f64 = row.try_get("spend").unwrap_or(0.0);
+		labels.push(month);
+		values.push(spend);
+	}
+
+	let chart = ChartSpec {
+		chart_type: "bar".to_string(),
+		title: format!("\"{}\" Spending by Month", input.search),
+		data: ChartData {
+			labels,
+			datasets: vec![Dataset {
+				name: "CHF".to_string(),
+				values,
+			}],
+		},
+		height: Some(320),
+	};
+
+	Ok(ToolOutput {
+		summary,
+		charts: vec![chart],
+	})
+}
+
+async fn list_transactions(
+	pool: &SqlitePool,
+	input: serde_json::Value,
+) -> Result<ToolOutput, ToolError> {
+	let input: ListTransactionsInput = serde_json::from_value(input)
+		.map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+	let limit = input.limit.unwrap_or(50).max(1);
+
+	let (conditions, params) = build_search_conditions(&input.search, &input.category, &input.year, &input.month);
+	let where_clause = format!("WHERE {}", conditions.join(" AND "));
+
+	// Get total count first
+	let count_query = format!("SELECT COUNT(*) as total FROM transactions {}", where_clause);
+	let mut count_args = SqliteArguments::default();
+	for param in &params {
+		let _ = count_args.add(param.clone());
+	}
+	let count_row = sqlx::query_with(&count_query, count_args).fetch_one(pool).await?;
+	let total: i64 = count_row.try_get("total").unwrap_or(0);
+
+	if total == 0 {
+		return Ok(ToolOutput {
+			summary: format!("No transactions found matching \"{}\".", input.search),
+			charts: Vec::new(),
+		});
+	}
+
+	// Fetch rows with limit
+	let list_query = format!(
+		"SELECT date, amount, merchant_name, raw_description FROM transactions {} ORDER BY date DESC LIMIT ?",
+		where_clause
+	);
+	let mut list_args = SqliteArguments::default();
+	for param in &params {
+		let _ = list_args.add(param.clone());
+	}
+	let _ = list_args.add(limit);
+	let rows = sqlx::query_with(&list_query, list_args).fetch_all(pool).await?;
+
+	let mut lines = Vec::new();
+	for row in rows.iter() {
+		let date: String = row.try_get("date").unwrap_or_else(|_| "?".to_string());
+		let amount: f64 = row.try_get("amount").unwrap_or(0.0);
+		let merchant: String = row.try_get("merchant_name").unwrap_or_else(|_| "?".to_string());
+		let raw: String = row.try_get("raw_description").unwrap_or_else(|_| "?".to_string());
+		lines.push(format!("{} | CHF {:.2} | {} | {}", date, -amount, merchant, raw));
+	}
+
+	let shown = rows.len() as i64;
+	let header = if shown < total {
+		format!("Showing {} of {} transactions matching \"{}\":", shown, total, input.search)
+	} else {
+		format!("{} transactions matching \"{}\":", total, input.search)
+	};
+
+	let summary = format!("{}\n{}", header, lines.join("\n"));
+
+	Ok(ToolOutput {
+		summary,
+		charts: Vec::new(),
 	})
 }
