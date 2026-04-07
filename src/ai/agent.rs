@@ -163,7 +163,7 @@ pub fn build_system_prompt(summary: &DataSummary, categories: &[CategoryInfo]) -
 
     format!(
         "You are a budget analysis assistant. Use the provided tools to answer questions about spending.\n\n
-tDATA SUMMARY\n- Date range: {}\n- Total transactions: {}\n- Categories and counts:\n{}\n\nCATEGORY SCHEMA\n{}\nTOOLS\n- spending_by_category: totals by category with optional year/month filters\n- monthly_trend: monthly spending totals with optional category/year filters\n- merchant_breakdown: top merchants within a category\n- income_vs_spending: monthly income vs spending, optional year filter\n\nGuidance: keep summaries concise, and use tools for quantitative questions.",
+tDATA SUMMARY\n- Date range: {}\n- Total transactions: {}\n- Categories and counts:\n{}\n\nCATEGORY SCHEMA\n{}\nTOOLS\n- spending_by_category: totals by category with optional year/month filters\n- monthly_trend: monthly spending totals with optional category/year filters\n- merchant_breakdown: top merchants within a category\n- income_vs_spending: monthly income vs spending, optional year filter\n\nGuidance: keep summaries concise, and use tools for quantitative questions.\n\nCharts are rendered visually by the frontend. Do not generate text-based charts, ASCII bar charts, or markdown tables of monthly data. Just summarize insights in words.",
         date_range,
         summary.total_transactions,
         category_counts,

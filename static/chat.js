@@ -74,7 +74,8 @@ class ChatManager {
             try {
                 const chunk = JSON.parse(jsonData);
                 this._textContent = (this._textContent || '') + chunk.text;
-                contentDiv.innerHTML = this.renderMarkdown(this._textContent);
+                const textArea = contentDiv.querySelector('.text-area') || contentDiv;
+                textArea.innerHTML = this.renderMarkdown(this._textContent);
                 this.autoScroll();
             } catch (e) {
                 console.error('Failed to parse chunk:', e);
@@ -125,13 +126,14 @@ class ChatManager {
     }
 
     renderToolStatus(container, tool) {
+        const toolArea = container.querySelector('.tool-area') || container;
         const id = 'tool-' + tool.tool.replace(/[^a-z0-9]/gi, '-');
-        let el = container.querySelector('#' + id);
+        let el = toolArea.querySelector('#' + id);
         if (!el) {
             el = document.createElement('div');
             el.id = id;
             el.className = 'tool-status';
-            container.appendChild(el);
+            toolArea.appendChild(el);
         }
         if (tool.status === 'running') {
             el.textContent = 'Running ' + tool.tool + '...';
@@ -149,7 +151,19 @@ class ChatManager {
         el.className = 'message ' + role;
         const content = document.createElement('div');
         content.className = 'message-content';
-        content.innerHTML = role === 'user' ? this.escapeHtml(text) : '';
+        if (role === 'user') {
+            content.innerHTML = this.escapeHtml(text);
+        } else {
+            const toolArea = document.createElement('div');
+            toolArea.className = 'tool-area';
+            const chartArea = document.createElement('div');
+            chartArea.className = 'chart-area';
+            const textArea = document.createElement('div');
+            textArea.className = 'text-area';
+            content.appendChild(toolArea);
+            content.appendChild(chartArea);
+            content.appendChild(textArea);
+        }
         el.appendChild(content);
         return el;
     }
@@ -163,10 +177,11 @@ class ChatManager {
     }
 
     renderChart(container, spec) {
+        const chartArea = container.querySelector('.chart-area') || container;
         const chartDiv = document.createElement('div');
         chartDiv.className = 'chart-container';
-        chartDiv.style.height = (spec.height || 300) + 'px';
-        container.appendChild(chartDiv);
+        chartDiv.style.minHeight = (spec.height || 300) + 'px';
+        chartArea.appendChild(chartDiv);
 
         // Map chart types: bar_h and grouped_bar both render as 'bar' in Frappe
         const frappeType = (spec.type === 'bar_h' || spec.type === 'grouped_bar') ? 'bar' : spec.type;

@@ -103,12 +103,22 @@ body {
     border: 1px solid #e0e0e0;
 }
 
+.message.assistant .message-content:has(.chart-area:not(:empty)) {
+    max-width: 100%;
+}
+
+.chart-area:empty {
+    display: none;
+}
+
 .chart-container {
     margin: 16px 0;
     padding: 12px;
     background: white;
     border: 1px solid #e0e0e0;
     border-radius: 4px;
+    min-width: 500px;
+    overflow-x: auto;
 }
 
 .chat-input-container {
