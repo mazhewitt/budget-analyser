@@ -17,6 +17,7 @@ pub struct Transaction {
     pub transaction_id: String,
     pub description: String,
     pub details: String,
+    pub sector: Option<String>,
     pub _footnotes: String,
 }
 
@@ -35,8 +36,8 @@ struct RawRecord {
     footnotes: Option<String>,
 }
 
-#[derive(Debug, PartialEq)]
-enum CsvFormat {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum CsvFormat {
     Synthetic,
     AccountStatement,
     CreditCard,
@@ -76,14 +77,16 @@ fn parse_amount(s: &Option<String>) -> Option<f64> {
     })
 }
 
-pub fn parse_csv(path: &Path) -> Result<Vec<Transaction>, String> {
+pub fn parse_csv(path: &Path) -> Result<(CsvFormat, Vec<Transaction>), String> {
     let format = detect_format(path)?;
 
-    match format {
-        CsvFormat::Synthetic => parse_synthetic(path),
-        CsvFormat::AccountStatement => parse_account_statement(path),
-        CsvFormat::CreditCard => parse_credit_card(path),
-    }
+    let transactions = match format {
+        CsvFormat::Synthetic => parse_synthetic(path)?,
+        CsvFormat::AccountStatement => parse_account_statement(path)?,
+        CsvFormat::CreditCard => parse_credit_card(path)?,
+    };
+
+    Ok((format, transactions))
 }
 
 fn parse_synthetic(path: &Path) -> Result<Vec<Transaction>, String> {
@@ -108,6 +111,7 @@ fn parse_synthetic(path: &Path) -> Result<Vec<Transaction>, String> {
             transaction_id: raw.transaction_id,
             description: raw.description,
             details: raw.details.unwrap_or_default(),
+            sector: None,
             _footnotes: raw.footnotes.unwrap_or_default(),
         };
 
@@ -227,6 +231,7 @@ fn parse_account_statement(path: &Path) -> Result<Vec<Transaction>, String> {
             transaction_id: raw.transaction_no,
             description: raw.description1,
             details: details_parts.join("; "),
+            sector: None,
             _footnotes: String::new(),
         };
 
@@ -294,7 +299,8 @@ fn parse_credit_card(path: &Path) -> Result<Vec<Transaction>, String> {
             _balance: 0.0,
             transaction_id: tx_id,
             description: raw.booking_text,
-            details: raw.sector.unwrap_or_default(),
+            details: raw.sector.clone().unwrap_or_default(),
+            sector: raw.sector,
             _footnotes: String::new(),
         };
 

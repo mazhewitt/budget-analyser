@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monthly Income 2024–2026</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e8eaf0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+    }
+    .wrapper { width: 100%; max-width: 960px; }
+    h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 4px; color: #f0f2f8; }
+    .subtitle { font-size: 0.85rem; color: #555; margin-bottom: 28px; }
+
+    .tabs { display: flex; gap: 8px; margin-bottom: 24px; }
+    .tab {
+      padding: 6px 16px; border-radius: 20px; font-size: 0.82rem; cursor: pointer;
+      border: 1px solid #23263a; background: transparent; color: #666;
+      transition: all 0.15s;
+    }
+    .tab.active { background: #23263a; color: #e8eaf0; border-color: #3d4268; }
+
+    .stats { display: flex; gap: 28px; margin-bottom: 28px; flex-wrap: wrap; }
+    .stat .val { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.02em; }
+    .stat .val.purple { color: #a78bfa; }
+    .stat .val.teal { color: #2dd4bf; }
+    .stat .val.amber { color: #fbbf24; }
+    .stat .lbl { font-size: 0.73rem; color: #555; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 3px; }
+
+    .chart-card { background: #181b24; border-radius: 16px; padding: 32px; border: 1px solid #23263a; }
+    .chart-wrap { position: relative; height: 340px; }
+
+    .legend { display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: #666; }
+    .swatch { width: 12px; height: 12px; border-radius: 2px; }
+
+    .note {
+      margin-top: 20px; font-size: 0.8rem; color: #555; line-height: 1.6;
+      border-left: 3px solid #23263a; padding-left: 12px;
+    }
+    .note strong { color: #888; }
+  </style>
+</head>
+<body>
+<div class="wrapper">
+  <h1>Monthly Income</h1>
+  <p class="subtitle">January 2024 – January 2026 · All amounts in CHF</p>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showView('salary')">Regular salary</button>
+    <button class="tab" onclick="showView('all')">Including bonuses & RSUs</button>
+  </div>
+
+  <div class="stats" id="stats-salary">
+    <div class="stat"><div class="val purple">CHF 38.5K</div><div class="lbl">Avg combined salary 2024</div></div>
+    <div class="stat"><div class="val purple">CHF 37.2K</div><div class="lbl">Avg combined salary 2025</div></div>
+    <div class="stat"><div class="val amber">+~8%</div><div class="lbl">Alexion pay rise (Apr 2025)</div></div>
+  </div>
+  <div class="stats" id="stats-all" style="display:none">
+    <div class="stat"><div class="val purple">CHF 49.3K</div><div class="lbl">Avg monthly income 2024</div></div>
+    <div class="stat"><div class="val purple">CHF 54.3K</div><div class="lbl">Avg monthly income 2025</div></div>
+    <div class="stat"><div class="val amber">+10%</div><div class="lbl">Year-on-year growth</div></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+    </div>
+    <div class="legend" id="legend-salary">
+      <div class="legend-item"><div class="swatch" style="background:#a78bfa"></div> Alexion Pharma salary</div>
+      <div class="legend-item"><div class="swatch" style="background:#2dd4bf"></div> Second salary (---)</div>
+    </div>
+    <div class="legend" id="legend-all" style="display:none">
+      <div class="legend-item"><div class="swatch" style="background:#a78bfa"></div> Alexion Pharma (incl. RSUs/bonus)</div>
+      <div class="legend-item"><div class="swatch" style="background:#2dd4bf"></div> Second salary (---)</div>
+      <div class="legend-item"><div class="swatch" style="background:#f97316"></div> Other (dividends, FX, Equatex)</div>
+    </div>
+    <p class="note" id="note-salary">
+      <strong>Pay rise visible from April 2025:</strong> Alexion regular salary stepped up from ~CHF 18,800–19,000 to ~CHF 20,500–20,900 — roughly an 8% increase. The second salary stream has remained largely flat at ~CHF 16,000–16,500. Feb &amp; Mar 2025 are shown as estimated base salary (the large RSU/bonus payments that month are excluded here).
+    </p>
+    <p class="note" id="note-all" style="display:none">
+      <strong>Full income including one-offs:</strong> Feb 2025 (CHF 143K) and Mar 2025 (CHF 118K) stand out — these are large RSU vest or bonus payments from Alexion, plus what appears to be a tax refund or transfer in Feb 2025.
+    </p>
+  </div>
+</div>
+
+<script>
+const labels = [
+  'Jan 24','Feb 24','Mar 24','Apr 24','May 24','Jun 24',
+  'Jul 24','Aug 24','Sep 24','Oct 24','Nov 24','Dec 24',
+  'Jan 25','Feb 25','Mar 25','Apr 25','May 25','Jun 25',
+  'Jul 25','Aug 25','Sep 25','Oct 25','Nov 25','Dec 25',
+  'Jan 26'
+];
+
+// Regular Alexion salary only (exclude RSU/bonus months Mar 24, Feb 25, Mar 25)
+const alexionRegular = [
+  18434, 18318, null, 19718, 18918, 18950,
+  18941, 18809, 18874, 18809, 19306, 18959,
+  19546, null, null, 20516, 20579, 20606,
+  20861, 19866, 19709, 20568, 20908, 19794,
+  20011
+];
+
+// Second salary "---" regular (exclude Feb 24 and Feb 25 big payments)
+const secondRegular = [
+  13889, null, 16876, 18726, 16451, 16435,
+  16466, 15950, 15935, 15949, 17967, 16435,
+  18498, null, 17551, 16496, 16510, 16510,
+  16511, 16241, 15974, 16509, 16240, 16252,
+  17961
+];
+
+// Full monthly totals (from earlier query)
+const alexionFull = [
+  18434, 18318, 85858, 19718, 18918, 18950,
+  18941, 18809, 18874, 18809, 19306, 18959,
+  19546, 76174, 85403, 20516, 20579, 20606,
+  20861, 19866, 19709, 20568, 20908, 19794,
+  20011
+];
+
+const secondFull = [
+  13889, 53973, 16876, 18726, 16451, 16435,
+  16466, 15950, 15935, 15949, 17967, 16435,
+  18498, 66411, 17551, 16496, 16510, 16510,
+  16511, 16241, 15974, 16509, 16240, 16252,
+  17961
+];
+
+const otherFull = [
+  1100, 1050, 3653, 55, 29392, 83,
+  57, 50, 295, 513, 552, 513,
+  50, 500, 281, 16028, 83, 98,
+  587, 250, 248, 261, 390, 253,
+  52
+];
+
+let currentChart = null;
+
+function buildChart(view) {
+  if (currentChart) currentChart.destroy();
+
+  const ctx = document.getElementById('chart').getContext('2d');
+
+  let datasets;
+  if (view === 'salary') {
+    datasets = [
+      {
+        label: 'Alexion Pharma',
+        data: alexionRegular,
+        backgroundColor: 'rgba(167,139,250,0.8)',
+        hoverBackgroundColor: 'rgba(167,139,250,1)',
+        borderRadius: 5,
+        borderSkipped: false,
+        stack: 'salary'
+      },
+      {
+        label: 'Second salary',
+        data: secondRegular,
+        backgroundColor: 'rgba(45,212,191,0.75)',
+        hoverBackgroundColor: 'rgba(45,212,191,1)',
+        borderRadius: 5,
+        borderSkipped: false,
+        stack: 'salary'
+      }
+    ];
+  } else {
+    datasets = [
+      {
+        label: 'Alexion Pharma',
+        data: alexionFull,
+        backgroundColor: 'rgba(167,139,250,0.8)',
+        hoverBackgroundColor: 'rgba(167,139,250,1)',
+        borderRadius: 3,
+        borderSkipped: false,
+        stack: 'total'
+      },
+      {
+        label: 'Second salary',
+        data: secondFull,
+        backgroundColor: 'rgba(45,212,191,0.75)',
+        hoverBackgroundColor: 'rgba(45,212,191,1)',
+        borderRadius: 3,
+        borderSkipped: false,
+        stack: 'total'
+      },
+      {
+        label: 'Other',
+        data: otherFull,
+        backgroundColor: 'rgba(249,115,22,0.7)',
+        hoverBackgroundColor: 'rgba(249,115,22,1)',
+        borderRadius: 3,
+        borderSkipped: false,
+        stack: 'total'
+      }
+    ];
+  }
+
+  currentChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e2130',
+          borderColor: '#2e3248',
+          borderWidth: 1,
+          padding: 12,
+          titleColor: '#999',
+          bodyColor: '#e8eaf0',
+          callbacks: {
+            label: ctx => {
+              if (ctx.raw === null) return null;
+              return `  ${ctx.dataset.label}: CHF ${ctx.raw.toLocaleString()}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          border: { color: '#23263a' },
+          ticks: { color: '#555', font: { size: 10.5 }, maxRotation: 0 }
+        },
+        y: {
+          stacked: true,
+          grid: { color: '#1c1f2e' },
+          border: { display: false },
+          ticks: {
+            color: '#555',
+            font: { size: 11 },
+            callback: v => 'CHF ' + (v / 1000).toFixed(0) + 'K'
+          }
+        }
+      }
+    }
+  });
+}
+
+function showView(view) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', (i === 0 && view === 'salary') || (i === 1 && view === 'all'));
+  });
+  document.getElementById('stats-salary').style.display = view === 'salary' ? 'flex' : 'none';
+  document.getElementById('stats-all').style.display = view === 'all' ? 'flex' : 'none';
+  document.getElementById('legend-salary').style.display = view === 'salary' ? 'flex' : 'none';
+  document.getElementById('legend-all').style.display = view === 'all' ? 'flex' : 'none';
+  document.getElementById('note-salary').style.display = view === 'salary' ? 'block' : 'none';
+  document.getElementById('note-all').style.display = view === 'all' ? 'block' : 'none';
+  buildChart(view);
+}
+
+showView('salary');
+</script>
+</body>
+</html>

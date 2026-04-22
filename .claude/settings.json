@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk -F';' 'NR>2 && $6 != \"\" {print $6}' /Users/mazdahewitt/projects/budget-analyser/data/real_data/transactions-10.csv)",
+      "Bash(/Users/mazdahewitt/projects/budget-analyser/target/release/budget-analyser categories *)",
+      "Bash(openspec validate *)",
+      "Bash(wait %bboll3mus)",
+      "Bash(cargo clippy *)",
+      "Read(//Users/mazdahewitt/.gemini/tmp/budget-analyser/tool-outputs/session-b74b5191-08ce-43e6-ad48-4977459fd213/**)",
+      "Bash(openspec archive *)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+sep=;
+Account number;Card number;Account/Cardholder;Purchase date;Booking text;Sector;Amount;Original currency;Rate;Currency;Debit;Credit;Booked
+1234 5678 9012;1234 5678 9012 3456;TEST USER;22.04.2026;UBS Rest. Flur Zürich Zürich CHE;Hotels;14.0;CHF;;CHF;14.0;;22.04.2026
+1234 5678 9012;1234 5678 9012 3456;TEST USER;22.04.2026;TWINT  *SBB Mobile Bern CHE;Commuter transportation;11.8;CHF;;CHF;11.8;;22.04.2026
+1234 5678 9012;1234 5678 9012 3456;TEST USER;21.04.2026;TWINT  *Sent to L.H.     079***1234   CHE;;45.0;CHF;;CHF;45.0;;21.04.2026
+1234 5678 9012;1234 5678 9012 3456;OTHER USER;20.04.2026;SBB EasyRide             Bern, 65     CHE;Commuter transportation;4.3;CHF;;CHF;4.3;;21.04.2026
+1234 5678 9012;1234 5678 9012 3456;TEST USER;21.04.2026;MIGROS ZH TIEFE           ZURICH       CHE;Fast-Food Restaurants;15.2;CHF;;CHF;15.2;;21.04.2026

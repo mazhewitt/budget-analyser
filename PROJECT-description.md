@@ -11,10 +11,22 @@ Turn opaque bank statements into a clear, categorised view of spending habits â€
 Specifically:
 
 1. **Import**: Parse UBS CSV exports into a structured format, handling Swiss-specific formatting (apostrophe thousands separators, mixed currency transactions). Detect and skip duplicate imports.
-2. **Classify**: Use LLMs to interpret cryptic merchant descriptions and map them to normalised merchant names and spending categories. Build a merchant cache that learns over time so the LLM handles cold starts while repeated merchants resolve instantly.
+2. **Classify**: Use a multi-stage classification pipeline. For credit card transactions, the system uses deterministic rules (MCC sectors and merchant overrides) before falling back to the LLM. For other formats, it uses the LLM to interpret cryptic merchant descriptions. A merchant cache learns from LLM results to speed up future imports.
 3. **Analyse**: Ask natural language questions about spending ("How much did I spend on dining this year?", "Break down groceries by store") through an AI chat interface. The AI uses tool calling to query the database, generate charts, and explain the results conversationally.
 4. **Recategorise**: Correct misclassifications through the chat interface. The AI updates the database and the corrections improve future analysis.
 5. **Store**: Persist everything in SQLite for querying, trend analysis, and long-term history.
+
+## Rules-Based CC Classification
+
+For UBS Credit Card exports, the system uses a deterministic rules-based classifier in `src/cc_rules.rs` before falling back to the LLM.
+
+### Precedence Order
+1. **Merchant Overrides**: Regex-based patterns for specific merchants (e.g., TWINT family transfers, specific supermarkets). Matches here win immediately with 0.95 confidence.
+2. **Sector Mapping**: Look-up table mapping the UBS `Sector` (MCC) to a budget category. Matches here have 0.90 confidence.
+3. **LLM Fallback**: If no rule matches or the sector is empty, the system falls back to the existing cache/LLM pipeline.
+
+### Configuration
+The mapping tables and overrides are currently defined in `src/cc_rules.rs`. The authoritative reference for the sector mapping can be found in `openspec/specs/rules-based-cc-classification/spec.md`.
 
 ## Design Principles
 

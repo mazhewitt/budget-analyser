@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Savings Rate Analysis</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f9; color: #1a1a2e; }
+    header { background: #1a1a2e; color: white; padding: 28px 40px; }
+    header h1 { font-size: 1.6rem; font-weight: 600; }
+    header p { opacity: 0.65; font-size: 0.9rem; margin-top: 4px; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .kpi { background: white; border-radius: 12px; padding: 20px 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+    .kpi .label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #888; font-weight: 600; }
+    .kpi .value { font-size: 1.9rem; font-weight: 700; margin-top: 6px; }
+    .kpi .sub { font-size: 0.8rem; color: #888; margin-top: 4px; }
+    .kpi.positive .value { color: #16a34a; }
+    .kpi.negative .value { color: #dc2626; }
+    .kpi.neutral .value { color: #1a1a2e; }
+
+    .card { background: white; border-radius: 12px; padding: 28px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); margin-bottom: 24px; }
+    .card h2 { font-size: 1rem; font-weight: 600; color: #333; margin-bottom: 20px; }
+    .chart-wrap { position: relative; height: 260px; }
+
+    .year-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+    .year-card { background: white; border-radius: 12px; padding: 22px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+    .year-card h3 { font-size: 1rem; font-weight: 700; color: #333; margin-bottom: 16px; }
+    .year-row { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+    .year-row:last-child { border-bottom: none; }
+    .year-row .lbl { color: #666; }
+    .year-row .val { font-weight: 600; }
+    .year-row .val.green { color: #16a34a; }
+    .year-row .val.red { color: #dc2626; }
+
+    .cat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .bar-item { margin-bottom: 10px; }
+    .bar-label { display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 4px; color: #444; }
+    .bar-track { background: #f0f0f0; border-radius: 4px; height: 8px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 4px; background: #4f46e5; }
+
+    .insight-box { background: #f0f4ff; border-left: 4px solid #4f46e5; border-radius: 0 8px 8px 0; padding: 14px 18px; margin-top: 20px; font-size: 0.88rem; color: #333; line-height: 1.6; }
+    .insight-box strong { color: #4f46e5; }
+
+    @media (max-width: 700px) {
+      .kpi-row { grid-template-columns: 1fr 1fr; }
+      .year-grid { grid-template-columns: 1fr; }
+      .cat-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Savings Rate Analysis</h1>
+  <p>January 2024 – January 2026 &nbsp;·&nbsp; All amounts in CHF</p>
+</header>
+
+<div class="container">
+
+  <!-- KPI row -->
+  <div class="kpi-row">
+    <div class="kpi neutral">
+      <div class="label">Total Income</div>
+      <div class="value">CHF 1.28M</div>
+      <div class="sub">Jan 2024 – Jan 2026</div>
+    </div>
+    <div class="kpi neutral">
+      <div class="label">Total Spending</div>
+      <div class="value">CHF 1.06M</div>
+      <div class="sub">Excl. investments & transfers</div>
+    </div>
+    <div class="kpi positive">
+      <div class="label">Total Invested</div>
+      <div class="value">CHF 213.6K</div>
+      <div class="sub">Stocks, funds, ETFs</div>
+    </div>
+    <div class="kpi positive">
+      <div class="label">Avg Savings Rate</div>
+      <div class="value">17%</div>
+      <div class="sub">Income minus day-to-day spend</div>
+    </div>
+  </div>
+
+  <!-- Monthly chart -->
+  <div class="card">
+    <h2>Monthly Income vs. Spending</h2>
+    <div class="chart-wrap">
+      <canvas id="barChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Savings rate chart -->
+  <div class="card">
+    <h2>Monthly Savings Rate (%)</h2>
+    <div class="chart-wrap">
+      <canvas id="rateChart"></canvas>
+    </div>
+    <div class="insight-box">
+      <strong>Large dips</strong> in April, June &amp; September 2024 and July 2025 correspond to big one-off outflows — likely tax bills, holidays, or irregular annual expenses. Your <strong>baseline monthly rate</strong> (the months without these spikes) sits around 25–35%, which is strong.
+    </div>
+  </div>
+
+  <!-- Annual summaries -->
+  <div class="year-grid">
+    <div class="year-card">
+      <h3>2024</h3>
+      <div class="year-row"><span class="lbl">Income</span><span class="val">CHF 591,980</span></div>
+      <div class="year-row"><span class="lbl">Spending</span><span class="val">CHF 523,000</span></div>
+      <div class="year-row"><span class="lbl">Invested</span><span class="val">CHF 58,270</span></div>
+      <div class="year-row"><span class="lbl">Surplus (pre-invest)</span><span class="val green">CHF 68,985</span></div>
+      <div class="year-row"><span class="lbl">Savings rate</span><span class="val green">11.7%</span></div>
+    </div>
+    <div class="year-card">
+      <h3>2025</h3>
+      <div class="year-row"><span class="lbl">Income</span><span class="val">CHF 651,261</span></div>
+      <div class="year-row"><span class="lbl">Spending</span><span class="val">CHF 534,438</span></div>
+      <div class="year-row"><span class="lbl">Invested</span><span class="val">CHF 154,301</span></div>
+      <div class="year-row"><span class="lbl">Surplus (pre-invest)</span><span class="val green">CHF 116,823</span></div>
+      <div class="year-row"><span class="lbl">Savings rate</span><span class="val green">17.9%</span></div>
+    </div>
+    <div class="year-card">
+      <h3>2026 (Jan only)</h3>
+      <div class="year-row"><span class="lbl">Income</span><span class="val">CHF 38,024</span></div>
+      <div class="year-row"><span class="lbl">Spending</span><span class="val">CHF 34,518</span></div>
+      <div class="year-row"><span class="lbl">Invested</span><span class="val">CHF 1,208</span></div>
+      <div class="year-row"><span class="lbl">Surplus (pre-invest)</span><span class="val green">CHF 3,507</span></div>
+      <div class="year-row"><span class="lbl">Savings rate</span><span class="val green">9.2%</span></div>
+    </div>
+  </div>
+
+  <!-- Spending breakdown -->
+  <div class="card">
+    <h2>Spending Breakdown (All Time, excl. Investments &amp; Transfers)</h2>
+    <div class="cat-grid">
+      <div>
+        <div class="bar-item"><div class="bar-label"><span>Taxes</span><span>CHF 329,699</span></div><div class="bar-track"><div class="bar-fill" style="width:100%; background:#ef4444;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Housing</span><span>CHF 115,931</span></div><div class="bar-track"><div class="bar-fill" style="width:35%; background:#f97316;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Other</span><span>CHF 109,601</span></div><div class="bar-track"><div class="bar-fill" style="width:33%; background:#eab308;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Shopping</span><span>CHF 102,435</span></div><div class="bar-track"><div class="bar-fill" style="width:31%; background:#4f46e5;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Travel</span><span>CHF 90,695</span></div><div class="bar-track"><div class="bar-fill" style="width:28%; background:#06b6d4;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Dining</span><span>CHF 84,475</span></div><div class="bar-track"><div class="bar-fill" style="width:26%; background:#8b5cf6;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Healthcare</span><span>CHF 51,324</span></div><div class="bar-track"><div class="bar-fill" style="width:16%; background:#10b981;"></div></div></div>
+      </div>
+      <div>
+        <div class="bar-item"><div class="bar-label"><span>Children</span><span>CHF 49,199</span></div><div class="bar-track"><div class="bar-fill" style="width:15%; background:#f43f5e;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Groceries</span><span>CHF 45,273</span></div><div class="bar-track"><div class="bar-fill" style="width:14%; background:#84cc16;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Insurance</span><span>CHF 44,422</span></div><div class="bar-track"><div class="bar-fill" style="width:13%; background:#f97316;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Transport</span><span>CHF 31,676</span></div><div class="bar-track"><div class="bar-fill" style="width:10%; background:#06b6d4;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Fees</span><span>CHF 21,592</span></div><div class="bar-track"><div class="bar-fill" style="width:7%; background:#6b7280;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Subscriptions</span><span>CHF 15,980</span></div><div class="bar-track"><div class="bar-fill" style="width:5%; background:#a78bfa;"></div></div></div>
+        <div class="bar-item"><div class="bar-label"><span>Cash</span><span>CHF 2,842</span></div><div class="bar-track"><div class="bar-fill" style="width:1%; background:#9ca3af;"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const months = ['Jan 24','Feb 24','Mar 24','Apr 24','May 24','Jun 24','Jul 24','Aug 24','Sep 24','Oct 24','Nov 24','Dec 24','Jan 25','Feb 25','Mar 25','Apr 25','May 25','Jun 25','Jul 25','Aug 25','Sep 25','Oct 25','Nov 25','Dec 25','Jan 26'];
+const income =   [33422,73341,107415,39499,84855,36519,36513,35809,35604,35271,37825,35907,38594,143085,118735,53540,37673,37714,38209,36357,36181,37338,37538,36299,38024];
+const spending = [12303,24200,63903,64839,57044,51959,41591,26323,67258,33930,27328,52317,40099,24858,84271,58175,39044,23372,95525,26007,22822,62579,26732,30955,34518];
+const invested = [0,0,4535,0,20207,0,0,0,0,1176,1176,31176,21208,1208,1208,1208,1208,30826,1208,1208,1208,22662,1208,69941,1208];
+
+const savingsRate = months.map((_, i) => {
+  if (income[i] === 0) return null;
+  return +((income[i] - spending[i]) / income[i] * 100).toFixed(1);
+});
+
+// Bar chart
+new Chart(document.getElementById('barChart'), {
+  type: 'bar',
+  data: {
+    labels: months,
+    datasets: [
+      { label: 'Income', data: income, backgroundColor: 'rgba(79,70,229,0.8)', borderRadius: 4 },
+      { label: 'Spending', data: spending, backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 },
+      { label: 'Invested', data: invested, backgroundColor: 'rgba(16,185,129,0.75)', borderRadius: 4 }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'top', labels: { font: { size: 12 }, boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => ` CHF ${ctx.raw.toLocaleString()}` } } },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+      y: { grid: { color: '#f0f0f0' }, ticks: { callback: v => 'CHF ' + (v/1000).toFixed(0) + 'K', font: { size: 11 } } }
+    }
+  }
+});
+
+// Savings rate line chart
+new Chart(document.getElementById('rateChart'), {
+  type: 'line',
+  data: {
+    labels: months,
+    datasets: [{
+      label: 'Savings Rate %',
+      data: savingsRate,
+      borderColor: '#4f46e5',
+      backgroundColor: 'rgba(79,70,229,0.08)',
+      fill: true,
+      tension: 0.3,
+      pointBackgroundColor: savingsRate.map(v => v !== null && v < 0 ? '#ef4444' : '#4f46e5'),
+      pointRadius: 4,
+      borderWidth: 2
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.raw}%` } } },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+      y: {
+        grid: { color: '#f0f0f0' },
+        ticks: { callback: v => v + '%', font: { size: 11 } },
+        afterBuildTicks: axis => {
+          if (!axis.ticks.some(t => t.value === 0)) axis.ticks.push({ value: 0 });
+        }
+      }
+    }
+  }
+});
+</script>
+</body>
+</html>
