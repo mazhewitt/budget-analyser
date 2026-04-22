@@ -3,6 +3,7 @@ mod categories;
 mod classifier;
 mod config;
 mod csv_parser;
+mod cc_rules;
 mod db;
 mod review;
 mod ai;
@@ -21,32 +22,34 @@ use ai::llm::LlmProvider;
 use chat::{ChatState, router as chat_router};
 use tools::ToolRegistry;
 
-#[derive(Default, Debug)]
-struct ImportStats {
-    total_parsed: usize,
-    new_insertions: usize,
-    duplicates_skipped: usize,
-    cache_hits: usize,
-    llm_calls: usize,
+#[derive(Default, Debug, PartialEq)]
+pub struct ImportStats {
+    pub total_parsed: usize,
+    pub new_insertions: usize,
+    pub duplicates_skipped: usize,
+    pub cache_hits: usize,
+    pub rules_hits: usize,
+    pub llm_calls: usize,
 }
 
 impl ImportStats {
-    fn accumulate(&mut self, other: &ImportStats) {
+    pub fn accumulate(&mut self, other: &ImportStats) {
         self.total_parsed += other.total_parsed;
         self.new_insertions += other.new_insertions;
         self.duplicates_skipped += other.duplicates_skipped;
         self.cache_hits += other.cache_hits;
+        self.rules_hits += other.rules_hits;
         self.llm_calls += other.llm_calls;
     }
 }
 
-fn import_file(
+pub fn import_file(
     db: &Database,
     classifier: &Classifier,
     csv_path: &Path,
     categories: &[CategoryInfo],
 ) -> Result<ImportStats, Box<dyn std::error::Error>> {
-    let transactions = csv_parser::parse_csv(csv_path)?;
+    let (csv_format, transactions) = csv_parser::parse_csv(csv_path)?;
     let total = transactions.len();
     
     let mut stats = ImportStats {
@@ -68,22 +71,35 @@ fn import_file(
             continue;
         }
 
-        // 2. Normalise key for cache lookup
-        let key = cache::normalise_merchant_key(&tx.description);
+        // 2. Rules-based classification (CreditCard only)
+        let mut rules_result = None;
+        if csv_format == csv_parser::CsvFormat::CreditCard {
+            if let Some(res) = cc_rules::classify(&tx.description, tx.sector.as_deref()) {
+                stats.rules_hits += 1;
+                rules_result = Some(res);
+            }
+        }
 
-        // 3. Cache lookup vs LLM classification
-        let result = if let Some(mut cached) = db.cache_lookup(&key)? {
-            stats.cache_hits += 1;
-            cached.source = "cache".to_string();
-            cached
-        } else {
-            stats.llm_calls += 1;
-            let amount = tx.debit.or(tx.credit);
-            let res = classifier.classify(&tx.description, amount, &tx.details, &examples, categories);
-            
-            // Store in cache for future use
-            db.cache_insert(&key, &res)?;
+        // 3. Normalise key for cache lookup (if no rules result)
+        let result = if let Some(res) = rules_result {
             res
+        } else {
+            let key = cache::normalise_merchant_key(&tx.description);
+
+            // 4. Cache lookup vs LLM classification
+            if let Some(mut cached) = db.cache_lookup(&key)? {
+                stats.cache_hits += 1;
+                cached.source = "cache".to_string();
+                cached
+            } else {
+                stats.llm_calls += 1;
+                let amount = tx.debit.or(tx.credit);
+                let res = classifier.classify(&tx.description, amount, &tx.details, &examples, categories);
+                
+                // Store in cache for future use
+                db.cache_insert(&key, &res)?;
+                res
+            }
         };
 
         println!(
@@ -91,7 +107,7 @@ fn import_file(
             i + 1, total, tx.description, result.category, result.merchant, result.confidence, result.source
         );
 
-        // 4. Insert transaction
+        // 5. Insert transaction
         if db.insert_transaction(tx, &result, Some(import_batch))? {
             stats.new_insertions += 1;
         }
@@ -443,10 +459,11 @@ fn run_import(input_path: &str, db_path: &str, model: &str, endpoint: &str) -> R
         println!("Importing file {}/{}: {}", i + 1, total_files, file_path.display());
         let file_stats = import_file(&db, &classifier, file_path, &categories)?;
         
-        println!("  File Summary: {} parsed, {} new, {} skipped, {} cache hits, {} llm calls",
+        println!("  File Summary: {} parsed, {} new, {} skipped, {} rules hits, {} cache hits, {} llm calls",
             file_stats.total_parsed,
             file_stats.new_insertions,
             file_stats.duplicates_skipped,
+            file_stats.rules_hits,
             file_stats.cache_hits,
             file_stats.llm_calls
         );
@@ -460,6 +477,7 @@ fn run_import(input_path: &str, db_path: &str, model: &str, endpoint: &str) -> R
         println!("  Total parsed:       {}", overall_stats.total_parsed);
         println!("  Total new:          {}", overall_stats.new_insertions);
         println!("  Total skipped:      {}", overall_stats.duplicates_skipped);
+        println!("  Total rules hits:   {}", overall_stats.rules_hits);
         println!("  Total cache hits:   {}", overall_stats.cache_hits);
         println!("  Total LLM calls:    {}", overall_stats.llm_calls);
     } else if total_files == 1 {
@@ -467,9 +485,82 @@ fn run_import(input_path: &str, db_path: &str, model: &str, endpoint: &str) -> R
         println!("  Total parsed:       {}", overall_stats.total_parsed);
         println!("  New insertions:     {}", overall_stats.new_insertions);
         println!("  Duplicates skipped: {}", overall_stats.duplicates_skipped);
+        println!("  Rules hits:         {}", overall_stats.rules_hits);
         println!("  Cache hits:         {}", overall_stats.cache_hits);
         println!("  LLM calls:          {}", overall_stats.llm_calls);
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_import_credit_card_rules_only() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path)?;
+        let cats = db.list_categories()?;
+        
+        // Unreachable endpoint so any LLM call fails fast
+        let classifier = Classifier::new("http://127.0.0.1:1", "dummy-model");
+        
+        let csv_path = Path::new("tests/fixtures/credit_card_tiny.csv");
+        if !csv_path.exists() { return Ok(()); }
+
+        let stats = import_file(&db, &classifier, csv_path, &cats)?;
+        
+        assert_eq!(stats.llm_calls, 0, "Should have 0 LLM calls");
+        assert!(stats.rules_hits > 0);
+        assert!(stats.total_parsed > 0);
+
+        let conn = rusqlite::Connection::open(&db_path)?;
+        
+        // Assert no inserted row has Uncategorised
+        let uncat_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM transactions WHERE category = 'Uncategorised'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(uncat_count, 0, "Expected no Uncategorised rows");
+
+        // Assert specific expected classifications
+        let get_cat = |desc: &str| -> Result<String, rusqlite::Error> {
+            conn.query_row(
+                "SELECT category FROM transactions WHERE raw_description LIKE ? LIMIT 1",
+                [&format!("%{}%", desc)],
+                |row| row.get(0),
+            )
+        };
+
+        assert_eq!(get_cat("MIGROS")?, "Groceries");
+        assert_eq!(get_cat("UBS Rest")?, "Dining");
+        assert_eq!(get_cat("SBB Mobile")?, "Transport");
+        assert_eq!(get_cat("L.H.")?, "Children");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_account_statement_falls_to_llm() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test_as.db");
+        let db = Database::open(&db_path)?;
+        let cats = db.list_categories()?;
+        let classifier = Classifier::new("http://127.0.0.1:1", "dummy-model");
+        let csv_path = Path::new("tests/fixtures/account_statement_tiny.csv");
+        if !csv_path.exists() { return Ok(()); }
+
+        let stats = import_file(&db, &classifier, csv_path, &cats)?;
+        
+        // The import succeeds, but because it's an account statement, it shouldn't use rules.
+        // It will attempt to call the LLM (and fallback to Uncategorised).
+        assert_eq!(stats.rules_hits, 0, "Account statements should not use rules");
+        assert!(stats.llm_calls > 0, "Account statements should fall back to LLM");
+        
+        Ok(())
+    }
 }
