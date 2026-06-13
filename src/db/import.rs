@@ -311,8 +311,15 @@ impl Database {
     }
 
     pub fn get_few_shot_examples(&self) -> Result<Vec<FewShotExample>> {
+        // Sample up to 2 most-recent examples per category to show breadth without
+        // bloating the prompt. Categories with many corrections (e.g. Dining at 152)
+        // otherwise dominate and push the prompt past 10k tokens.
         let mut stmt = self.conn.prepare(
-            "SELECT merchant_pattern, raw_description, correct_merchant, correct_category FROM few_shot_examples"
+            "SELECT merchant_pattern, raw_description, correct_merchant, correct_category FROM (
+                SELECT merchant_pattern, raw_description, correct_merchant, correct_category,
+                       ROW_NUMBER() OVER (PARTITION BY correct_category ORDER BY id DESC) AS rn
+                FROM few_shot_examples
+            ) WHERE rn <= 2 ORDER BY correct_category, rn"
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(FewShotExample {

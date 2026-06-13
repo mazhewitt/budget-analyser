@@ -7,7 +7,12 @@
       "Bash(wait %bboll3mus)",
       "Bash(cargo clippy *)",
       "Read(//Users/mazdahewitt/.gemini/tmp/budget-analyser/tool-outputs/session-b74b5191-08ce-43e6-ad48-4977459fd213/**)",
-      "Bash(openspec archive *)"
+      "Bash(openspec archive *)",
+      "Bash(ollama list *)",
+      "Bash(lsof -iTCP:11434 -sTCP:LISTEN)",
+      "Read(//private/etc/**)",
+      "Bash(echo \"---build exit: $?\")",
+      "Bash(echo \"exit: $?\")"
     ],
     "additionalDirectories": [
       "/tmp"

@@ -71,6 +71,8 @@ pub fn import_file(
             continue;
         }
 
+        let classify_start = std::time::Instant::now();
+
         // 2. Rules-based classification (CreditCard only)
         let mut rules_result = None;
         if csv_format == csv_parser::CsvFormat::CreditCard {
@@ -95,16 +97,17 @@ pub fn import_file(
                 stats.llm_calls += 1;
                 let amount = tx.debit.or(tx.credit);
                 let res = classifier.classify(&tx.description, amount, &tx.details, &examples, categories);
-                
+
                 // Store in cache for future use
                 db.cache_insert(&key, &res)?;
                 res
             }
         };
 
+        let elapsed_ms = classify_start.elapsed().as_millis();
         println!(
-            "  [{}/{}] {} → {} ({}) [{:.2}] via {}",
-            i + 1, total, tx.description, result.category, result.merchant, result.confidence, result.source
+            "  [{}/{}] {} → {} ({}) [{:.2}] via {} ({}ms)",
+            i + 1, total, tx.description, result.category, result.merchant, result.confidence, result.source, elapsed_ms
         );
 
         // 5. Insert transaction

@@ -22,6 +22,7 @@ struct ChatRequest {
     messages: Vec<Message>,
     format: &'static str,
     stream: bool,
+    think: bool,
 }
 
 #[derive(Serialize)]
@@ -49,8 +50,12 @@ struct LlmOutput {
 
 impl Classifier {
     pub fn new(base_url: &str, model: &str) -> Self {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .expect("failed to build reqwest client");
         Self {
-            client: reqwest::blocking::Client::new(),
+            client,
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
         }
@@ -68,6 +73,7 @@ impl Classifier {
             ],
             format: "json",
             stream: false,
+            think: false,
         };
 
         let url = format!("{}/api/chat", self.base_url);
@@ -82,11 +88,11 @@ impl Classifier {
                 Err(e) => {
                     retry_count += 1;
                     if retry_count > MAX_RETRIES {
-                        eprintln!("Ollama request failed after {} retries: {}", MAX_RETRIES, e);
+                        eprintln!("Ollama request failed after {} retries: {:?}", MAX_RETRIES, e);
                         return Self::fallback(description);
                     }
                     let backoff_ms = 500 * 2u64.pow(retry_count - 1); // 500ms, 1s, 2s
-                    eprintln!("Ollama request failed (attempt {}/{}): {}. Retrying in {}ms...",
+                    eprintln!("Ollama request failed (attempt {}/{}): {:?}. Retrying in {}ms...",
                              retry_count, MAX_RETRIES, e, backoff_ms);
                     std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
                     continue;

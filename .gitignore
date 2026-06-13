@@ -31,3 +31,4 @@ Cargo.lock
 .env.local
 
 data/real_data/*
+/cowork
