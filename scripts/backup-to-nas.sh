@@ -12,14 +12,14 @@
 # Override any of these via environment variables if needed:
 #   NAS_USER   SSH user on the NAS            (default: adukiman)
 #   NAS_HOST   NAS hostname                   (default: aduki-nas.local)
-#   NAS_DIR    remote backup directory        (default: ~/backups/budget-analyser)
+#   NAS_DIR    remote backup directory        (default: /volume2/Volume2/backup)
 #   DB_PATH    local database to back up      (default: data/budget.db)
 #
 set -euo pipefail
 
 NAS_USER="${NAS_USER:-adukiman}"
 NAS_HOST="${NAS_HOST:-aduki-nas.local}"
-NAS_DIR="${NAS_DIR:-backups/budget-analyser}"   # relative to the NAS user's home
+NAS_DIR="${NAS_DIR:-/volume2/Volume2/backup}"
 DB_PATH="${DB_PATH:-data/budget.db}"
 
 # Resolve DB_PATH relative to the repo root (parent of this script's dir).
